@@ -1,0 +1,10 @@
+{
+  "appId": "com.thomaslucido.dollararcade",
+  "appName": "Dollar Arcade",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#f6f1e7",
+    "scrollEnabled": false
+  }
+}
