@@ -1,0 +1,53 @@
+default_platform(:ios)
+
+platform :ios do
+  # Builds one game as its own app (staged by scripts/stage-app.mjs), signs it with
+  # cloud-managed signing via the App Store Connect API key, uploads it with its listing and
+  # screenshots, and submits it for review with automatic release.
+  lane :release do
+    key_path = File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: key_path
+    )
+    project = "ios/App/App.xcodeproj"
+    workspace = "ios/App/App.xcworkspace"
+    use_ws = File.exist?(File.expand_path("../#{workspace}", __dir__))
+
+    increment_version_number(xcodeproj: project, version_number: ENV.fetch("APP_VERSION"))
+    increment_build_number(xcodeproj: project, build_number: ENV.fetch("BUILD_NUMBER"))
+
+    auth = "-allowProvisioningUpdates -authenticationKeyPath #{key_path} " \
+           "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} -authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
+    build_args = {
+      scheme: "App",
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "build",
+      clean: true,
+      output_name: "App.ipa",
+      xcargs: "#{auth} DEVELOPMENT_TEAM=#{ENV.fetch('TEAM_ID')} CODE_SIGN_STYLE=Automatic",
+      export_xcargs: auth,
+      export_team_id: ENV.fetch("TEAM_ID")
+    }
+    use_ws ? build_args[:workspace] = workspace : build_args[:project] = project
+    build_app(**build_args)
+
+    upload_to_app_store(
+      api_key: api_key,
+      app_identifier: ENV.fetch("APP_IDENTIFIER"),
+      ipa: "build/App.ipa",
+      app_version: ENV.fetch("APP_VERSION"),
+      force: true,
+      skip_metadata: false,
+      skip_screenshots: false,
+      overwrite_screenshots: true,
+      submit_for_review: true,
+      automatic_release: true,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false,
+      submission_information: { add_id_info_uses_idfa: false, export_compliance_uses_encryption: false }
+    )
+  end
+end

@@ -1,0 +1,59 @@
+name: Prepare next app
+# Runs when a game is queued (Saturday's pick) or by hand. Registers its bundle ID with Apple and,
+# if the App Store Connect app record does not exist yet, opens a GitHub issue with Tom's checklist.
+on:
+  push:
+    branches: [main]
+    paths: ["data/ship-queue.json"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Which game is next
+        id: next
+        run: node scripts/next-release.mjs
+      - name: Register bundle ID
+        if: steps.next.outputs.slug != ''
+        id: reg
+        run: |
+          if [ -z "$ASC_KEY_ID" ]; then echo "secrets=missing" >> "$GITHUB_OUTPUT"; echo "App Store secrets not set yet (SETUP.md step 5)." >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          echo "secrets=ok" >> "$GITHUB_OUTPUT"
+          node scripts/asc.mjs register "${{ steps.next.outputs.slug }}"
+      - name: Check for the app record
+        if: steps.next.outputs.slug != '' && steps.reg.outputs.secrets == 'ok'
+        id: app
+        run: node scripts/asc.mjs app "${{ steps.next.outputs.slug }}"
+      - name: Open checklist issue for Tom
+        if: steps.next.outputs.slug != '' && (steps.reg.outputs.secrets == 'missing' || steps.app.outputs.exists == 'false')
+        run: |
+          SLUG="${{ steps.next.outputs.slug }}"
+          NAME=$(node -p "require('./www/games/$SLUG/store.json').appName")
+          BUNDLE=$(node -p "require('./www/games.json').find(g=>g.slug==='$SLUG').bundleId")
+          TITLE="Action needed: set up $NAME in App Store Connect before Sunday"
+          if gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number' | grep -q .; then echo "issue already open"; exit 0; fi
+          EXTRA=""
+          if [ "${{ steps.reg.outputs.secrets }}" = "missing" ]; then EXTRA=$'**First:** finish SETUP.md (the App Store secrets are not in GitHub yet), then rerun the "Prepare next app" workflow from the Actions tab so the bundle ID gets registered.\n\n'; fi
+          BODY=$(cat <<MD
+          ${EXTRA}This week's app is **$NAME**. It ships Sunday at about 7am once these are done (about 5 minutes in App Store Connect):
+
+          1. **Apps > + > New App**: iOS, name **$NAME**, language English (U.S.), bundle ID **$BUNDLE**, SKU **$SLUG**, full access. If the name is taken, pick another and change \`appName\` in \`www/games/$SLUG/store.json\` to match.
+          2. **App Privacy > Get Started**: "No, we do not collect data from this app" > Publish.
+          3. **App Information > Age Rating > Edit**: answer None / No to everything (4+). Save.
+          4. **Pricing and Availability**: price **\$0.99**, all countries. Save.
+
+          Close this issue when done. Everything else (build, icon, screenshots, description, review notes, submit) is automatic.
+          MD
+          )
+          gh issue create --title "$TITLE" --body "$BODY"

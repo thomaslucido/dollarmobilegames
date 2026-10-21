@@ -1,0 +1,24 @@
+{
+  "name": "dollar-mobile-games",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dollar Mobile Games: one original iPhone game a week, each its own $0.99 app.",
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "playtest": "node scripts/playtest.mjs",
+    "shoot": "node scripts/shoot.mjs",
+    "serve": "npx --yes http-server www -p 8080 -c-1"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.3",
+    "@capacitor/haptics": "8.0.2",
+    "@capacitor/ios": "8.5.3",
+    "@capgo/native-purchases": "8.9.6"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "8.5.3",
+    "playwright": "1.56.0"
+  }
+}
