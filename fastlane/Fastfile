@@ -15,6 +15,17 @@ platform :ios do
     workspace = "ios/App/App.xcworkspace"
     use_ws = File.exist?(File.expand_path("../#{workspace}", __dir__))
 
+    # Make sure the app's privacy manifest is part of the App target.
+    require "xcodeproj"
+    xproj = Xcodeproj::Project.open(File.expand_path("../#{project}", __dir__))
+    app_target = xproj.targets.find { |t| t.name == "App" }
+    app_group = xproj.main_group.find_subpath("App", false) || xproj.main_group
+    unless app_group.files.any? { |f| f.path == "PrivacyInfo.xcprivacy" }
+      ref = app_group.new_reference("PrivacyInfo.xcprivacy")
+      app_target.resources_build_phase.add_file_reference(ref)
+      xproj.save
+    end
+
     increment_version_number(xcodeproj: project, version_number: ENV.fetch("APP_VERSION"))
     increment_build_number(xcodeproj: project, build_number: ENV.fetch("BUILD_NUMBER"))
 
