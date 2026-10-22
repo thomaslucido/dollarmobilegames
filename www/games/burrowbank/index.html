@@ -29,26 +29,33 @@
   const FONT = 'ui-serif, Georgia, serif';
 
   // ---------- hex board topology (flat-top, odd-q offset columns) ----------
-  const COLS = 6, ROWS = 8, N = COLS * ROWS, SQ3 = Math.sqrt(3);
+  // The bank grows with the levels: small banks early, the full 6 x 8 from level 51 on.
+  let COLS = 6, ROWS = 8, N = 48, cells = [], NB = [], LINES = [];
+  const SQ3 = Math.sqrt(3);
   // clockwise from north: N, NE, SE, S, SW, NW (axial dq, dr)
   const DIRS = [[0, -1], [1, -1], [1, 0], [0, 1], [-1, 1], [-1, 0]];
   const ANG = DIRS.map((_, k) => (-90 + 60 * k) * Math.PI / 180);
   const opp = (k) => (k + 3) % 6;
   const idx = (col, row) => (col < 0 || col >= COLS || row < 0 || row >= ROWS) ? -1 : row * COLS + col;
-  const cells = [];
-  for (let row = 0; row < ROWS; row++) for (let col = 0; col < COLS; col++) {
-    cells.push({ col, row, q: col, r: row - (col - (col & 1)) / 2, x: 0, y: 0 });
-  }
   function axialToIdx(q, r) { return idx(q, r + (q - (q & 1)) / 2); }
-  const NB = cells.map((c) => DIRS.map(([dq, dr]) => axialToIdx(c.q + dq, c.r + dr)));
-  const LINES = cells.map((c, i) => DIRS.map((_, k) => {
-    const out = []; let j = NB[i][k];
-    while (j >= 0) { out.push(j); j = NB[j][k]; }
-    return out;
-  }));
-
+  function setBoard(cols, rows) {
+    if (cols === COLS && rows === ROWS && cells.length) return;
+    COLS = cols; ROWS = rows; N = cols * rows; cells = [];
+    for (let row = 0; row < ROWS; row++) for (let col = 0; col < COLS; col++) {
+      cells.push({ col, row, q: col, r: row - (col - (col & 1)) / 2, x: 0, y: 0 });
+    }
+    NB = cells.map((c) => DIRS.map(([dq, dr]) => axialToIdx(c.q + dq, c.r + dr)));
+    LINES = cells.map((c, i) => DIRS.map((_, k) => {
+      const out = []; let j = NB[i][k];
+      while (j >= 0) { out.push(j); j = NB[j][k]; }
+      return out;
+    }));
+    if (W) layout();
+  }
+  const boardFor = (n) => n <= 5 ? [4, 5] : n <= 15 ? [5, 6] : n <= 30 ? [5, 7] : n <= 50 ? [6, 7] : [6, 8];
   // ---------- layout ----------
   let W = 0, H = 0, DPR = 1, ctx = null;
+  setBoard(4, 5);
   const Lay = { R: 36, skyH: 100, bankTop: 110, riverTop: 780, boardTop: 0, boardBot: 0, boardL: 0, boardR: 0, safeTop: 0, safeBot: 0, birdS: 0.2 };
   let bg = null;
 
@@ -61,10 +68,10 @@
     const riverH = Math.max(46, H * 0.072) + Lay.safeBot;
     Lay.riverTop = H - riverH;
     const top = Lay.bankTop + 16, bot = Lay.riverTop - 10;
-    const rw = (W - 32) / 9.5, rh = (bot - top) / (SQ3 * (ROWS + 0.5));
+    const bwu = 1.5 * COLS + 0.5, rw = (W - 32) / bwu, rh = (bot - top) / (SQ3 * (ROWS + 0.5));
     const R = Math.max(14, Math.min(rw, rh, 52));
     Lay.R = R;
-    const bw = 9.5 * R, bh = SQ3 * R * (ROWS + 0.5);
+    const bw = bwu * R, bh = SQ3 * R * (ROWS + 0.5);
     const ox = (W - bw) / 2 + R, oy = top + Math.max(0, (bot - top - bh) / 2) + SQ3 * R / 2;
     for (const c of cells) { c.x = ox + 1.5 * R * c.col; c.y = oy + SQ3 * R * (c.row + 0.5 * (c.col & 1)); }
     Lay.boardL = ox - R; Lay.boardR = ox - R + bw; Lay.boardTop = oy - SQ3 * R / 2; Lay.boardBot = Lay.boardTop + bh;
@@ -134,13 +141,21 @@
     ctx.restore();
   }
 
+  // ---------- progress (saved on device) ----------
+  const TOTAL = 100, HEARTS = 3;
+  let cleared = Math.min(TOTAL, kit.get('cleared', 0) | 0);   // levels 1..cleared are beaten
+  let stars = kit.get('stars', []);                           // stars[n-1] = best stars on level n
+  if (!Array.isArray(stars)) stars = [];
+  const unlocked = () => Math.min(TOTAL, cleared + 1);
+  const totalStars = () => stars.reduce((a, b) => a + (b | 0), 0);
+
   // ---------- state ----------
-  const S = { mode: 'title', prev: 'play', t: 0, run: 0, score: 0, best: kit.best(), newBest: false, shake: 0, shakeAmp: 0,
-    flocks: 0, sent: 0, bigFlock: 0, nextArrival: 2, hb: 0, hbPulse: 0, cardT: 0, endT: 0, endBird: null, filled: 0 };
+  const S = { mode: 'title', prev: 'play', t: 0, run: 0, level: unlocked(), hearts: HEARTS, sent: 0, bigFlock: 0, shake: 0, shakeAmp: 0,
+    cardT: 0, arrivalsLeft: 0, nextArrival: 0, doneT: 0, gotStars: 0, newStars: false, page: 0, banner: 0, lv: null };
   let grid = new Array(N).fill(null);
   let reserved = new Array(N).fill(false);
   let flash = new Array(N).fill(0);
-  let incoming = [], flyers = [], parts = [], popups = [], bonkLines = [], clouds = [];
+  let incoming = [], flyers = [], parts = [], popups = [], bonkLines = [], clouds = [], buttons = [];
   let autopilot = false, demoT = 0;
 
   const rand = (a, b) => a + Math.random() * (b - a);
@@ -149,80 +164,104 @@
   const isClear = (i, k) => LINES[i][k].every((j) => !grid[j]);
   const blockerOf = (i, k) => LINES[i][k].find((j) => grid[j]);
 
-  // difficulty levers (t = seconds since the run started)
-  const arrivalInterval = (t) => Math.max(0.85, 2.2 - 0.0065 * t);
-  const clearChance = (t) => Math.max(0.35, 0.70 - 0.0019 * t);
-  const COPY_CHANCE = 0.3;
-  const pebbleChance = (t) => t < 90 ? 0 : Math.min(0.12, (t - 90) * 0.0013);
-
   function newBird(dir) { return { kind: 'bird', dir, ph: Math.random() * 6.28, blinkIn: rand(1.5, 6), blink: 0, wob: 0, land: 0 }; }
 
-  function chooseDir(i, t) {
-    if (Math.random() < COPY_CHANCE) {
-      const cand = [];
-      for (let e = 0; e < 6; e++) {
-        const j = NB[i][e]; if (j < 0) continue;
-        const b = grid[j];
-        if (b && b.kind === 'bird' && (b.dir === e || b.dir === opp(e))) cand.push(b.dir);
+  // ---------- levels ----------
+  // Seeded, so each level is the same bank every time. Built backwards: every bird is placed with a
+  // clear path at the moment it is placed, so taking them off in reverse order always works, and
+  // since sending a bird off only ever opens paths, a level can never become impossible.
+  function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  function levelParams(n) {
+    const d = (n - 1) / (TOTAL - 1);
+    return {
+      birds: 4 + Math.round(30 * d),                                   // 4 on level 1, 34 on level 100
+      pebbles: n < 12 ? 0 : Math.min(6, 1 + Math.floor((n - 12) / 16)), // stones that never move
+      arrivals: n < 30 ? 0 : Math.min(8, 1 + Math.floor((n - 30) / 9)), // swallows that swoop in mid-level
+      every: 3.4 - 1.4 * d,                                            // seconds between arrivals
+      chain: n < 3 ? 0 : 0.14 + 0.3 * d,                               // chance a placement is a whole line of birds
+      block: 0.3 + 0.6 * d                                             // chance a new bird sits in another's path
+    };
+  }
+
+  function inSomePath(g, c) {
+    for (let i = 0; i < N; i++) { const b = g[i]; if (b && b.kind === 'bird' && LINES[i][b.dir].includes(c)) return true; }
+    return false;
+  }
+
+  function buildLevel(n) {
+    setBoard(...boardFor(n));
+    const P = levelParams(n), r = rng(n * 104729 + 7);
+    const rpick = (a) => a[Math.floor(r() * a.length)];
+    const g = new Array(N).fill(null);
+    const clear = (i, k) => LINES[i][k].every((j) => !g[j]);
+    for (let p = 0; p < P.pebbles; p++) {
+      const free = [...Array(N).keys()].filter((i) => !g[i]);
+      g[rpick(free)] = { kind: 'pebble', age: 0, rot: r() * 0.8 - 0.4, land: 0, wob: 0 };
+    }
+    let placed = 0;
+    for (let tries = 0; tries < 3000 && placed < P.birds; tries++) {
+      const empty = [...Array(N).keys()].filter((i) => !g[i]);
+      if (!empty.length) break;
+      let pool = empty;
+      if (placed && r() < P.block) { const bl = empty.filter((i) => inSomePath(g, i)); if (bl.length) pool = bl; }
+      const i = rpick(pool);
+      const dirs = [0, 1, 2, 3, 4, 5].filter((k) => clear(i, k));
+      if (!dirs.length) continue;
+      // later levels lean toward long flight paths, which give later birds more ways to get in the way
+      dirs.sort((a, b) => LINES[i][b].length - LINES[i][a].length);
+      const dir = r() < 0.5 * (n / TOTAL) ? dirs[0] : rpick(dirs);
+      const line = [i];
+      if (r() < P.chain) {
+        const want = 2 + Math.floor(r() * 3);
+        let c = i;
+        while (line.length < want && placed + line.length < P.birds) { c = NB[c][opp(dir)]; if (c < 0 || g[c]) break; line.push(c); }
       }
-      if (cand.length) return pick(cand);
+      for (const c of line) { g[c] = newBird(dir); placed++; }
     }
-    const clear = [], blocked = [];
-    for (let k = 0; k < 6; k++) (isClear(i, k) ? clear : blocked).push(k);
-    const set = Math.random() < clearChance(t) ? clear : blocked;
-    return set.length ? pick(set) : Math.floor(Math.random() * 6);
+    return { n, P, grid: g, birds: placed };
   }
 
-  function seedBoard() {
-    for (let tries = 0; tries < 80; tries++) {
-      grid = new Array(N).fill(null);
-      const order = [...Array(N).keys()].sort(() => Math.random() - 0.5).slice(0, 14);
-      for (const i of order) grid[i] = newBird(chooseDir(i, 0));
-      let free = 0;
-      for (let i = 0; i < N; i++) if (grid[i] && isClear(i, grid[i].dir)) free++;
-      if (free >= 5) return;
-    }
-  }
-
-  function reset() {
-    reserved.fill(false); flash.fill(0);
+  function startLevel(n) {
+    S.level = clamp(n, 1, unlocked());
+    S.lv = buildLevel(S.level);
+    grid = S.lv.grid.map((b) => b && Object.assign({}, b, { ph: Math.random() * 6.28, land: 0.2 + Math.random() * 0.15 }));
+    reserved = new Array(N).fill(false); flash = new Array(N).fill(0);
     incoming = []; flyers = []; parts = []; popups = []; bonkLines = [];
-    seedBoard();
-    Object.assign(S, { run: 0, score: 0, newBest: false, flocks: 0, sent: 0, bigFlock: 0, nextArrival: 1.6, hb: 0, hbPulse: 0, endT: 0, endBird: null });
+    Object.assign(S, { mode: 'play', t: 0, run: 0, hearts: HEARTS, sent: 0, bigFlock: 0, doneT: 0, banner: 1.4,
+      arrivalsLeft: S.lv.P.arrivals, nextArrival: 2.5 });
+    kit.buzz(); GameKit.sound(1200, 0.06, 'triangle', 0.05);
   }
-  seedBoard();
+
   ctx = kit.fitCanvas(cv, (s) => { W = s.w; H = s.h; DPR = s.dpr; layout(); });
+  // the title screen shows level 1's bank as a backdrop
+  grid = buildLevel(S.level).grid;
 
-  function start() { reset(); S.mode = 'play'; S.t = 0; kit.buzz(); GameKit.sound(1200, 0.06, 'triangle', 0.05); }
-
-  // ---------- arrivals ----------
-  function spawnArrival(penalty) {
+  // ---------- arrivals (mid-level swallows) ----------
+  function spawnArrival() {
     const empties = [];
-    for (let i = 0; i < N; i++) if (!grid[i] && !reserved[i]) empties.push(i);
-    if (!empties.length) { endRun(); return; }
-    const i = pick(empties);
-    const pebble = !penalty && Math.random() < pebbleChance(S.run);
-    const dir = pebble ? 0 : chooseDir(i, S.run);
+    for (let i = 0; i < N; i++) if (!grid[i] && !reserved[i] && [0, 1, 2, 3, 4, 5].some((k) => isClear(i, k))) empties.push(i);
+    if (!empties.length) return false;
+    let pool = empties;
+    if (Math.random() < S.lv.P.block) { const bl = empties.filter((i) => inSomePath(grid, i)); if (bl.length) pool = bl; }
+    const i = pick(pool);
+    const dirs = [0, 1, 2, 3, 4, 5].filter((k) => isClear(i, k));
     const c = cells[i];
-    const sx = clamp(c.x + rand(-120, 120), 20, W - 20), sy = Lay.safeTop + rand(10, 40);
     reserved[i] = true;
-    const total = penalty ? 0.55 : 0.8;
-    incoming.push({ i, dir, pebble, t: total, total, sx, sy });
+    incoming.push({ i, dir: pick(dirs), t: 0.9, total: 0.9, sx: clamp(c.x + rand(-120, 120), 20, W - 20), sy: Lay.safeTop + rand(10, 40) });
+    return true;
   }
 
   function land(a) {
     reserved[a.i] = false;
     if (grid[a.i]) return;
+    // keep the promise that every arriving bird has a way out
+    let dir = a.dir;
+    if (!isClear(a.i, dir)) { const d = [0, 1, 2, 3, 4, 5].filter((k) => isClear(a.i, k)); if (d.length) dir = d[0]; }
+    const b = newBird(dir); b.land = 0.2; grid[a.i] = b;
     const c = cells[a.i];
-    if (a.pebble) {
-      grid[a.i] = { kind: 'pebble', age: 0, rot: rand(-0.4, 0.4), land: 0.2 };
-      GameKit.sound(110, 0.05, 'square', 0.03);
-      puff(c.x, c.y, C.pebble, 6);
-    } else {
-      const b = newBird(a.dir); b.land = 0.2; grid[a.i] = b;
-      GameKit.sound(620, 0.04, 'sine', 0.025);
-      puff(c.x, c.y + Lay.R * 0.3, C.sandTop, 5);
-    }
+    GameKit.sound(620, 0.04, 'sine', 0.025);
+    puff(c.x, c.y + Lay.R * 0.3, C.sandTop, 5);
   }
 
   function puff(x, y, col, n) {
@@ -266,9 +305,8 @@
         tx: (Math.random() < 0.5 ? rand(W * 0.06, W * 0.3) : rand(W * 0.62, W * 0.94)), ty: Lay.safeTop + rand(14, (Lay.skyH - Lay.safeTop) * 0.7), trail: [], trailT: 0, launched: false });
       grid[j] = null;
     });
-    const pts = n * (n + 1) / 2;
-    S.score += pts; S.sent += n; S.flocks++; S.bigFlock = Math.max(S.bigFlock, n);
-    popups.push({ x: cells[i].x, y: cells[i].y - Lay.R * 0.3, text: '+' + pts, t: 0, big: n >= 4 });
+    S.sent += n; S.bigFlock = Math.max(S.bigFlock, n);
+    if (n >= 2) popups.push({ x: cells[i].x, y: cells[i].y - Lay.R * 0.3, text: 'Flock of ' + n, t: 0, big: n >= 4 });
     if (n >= 4) {
       S.shake = 0.15; S.shakeAmp = 2; kit.buzz('medium');
       for (let k = 0; k < 4; k++) setTimeout(() => GameKit.sound(1200 * Math.pow(2, (2 * n + 3 + k * 2) / 12), 0.05, 'triangle', 0.035), n * 70 + 40 + k * 55);
@@ -287,39 +325,47 @@
     const c = cells[i];
     parts.push({ star: true, x: c.x + Math.cos(ANG[b.dir]) * Lay.R * 0.5, y: c.y + Math.sin(ANG[b.dir]) * Lay.R * 0.5 - 4, vx: 0, vy: -40, life: 0.55, max: 0.55, g: 0, rot: 0 });
     GameKit.sound(180, 0.12, 'sine', 0.09); kit.buzz('medium');
-    spawnArrival(true);
+    S.hearts--;
+    S.heartPop = 0.4;
+    if (S.hearts <= 0) { S.mode = 'failing'; S.doneT = 0; S.shake = 0.25; S.shakeAmp = 3; kit.buzz('heavy'); }
   }
 
-  function endRun() {
-    if (S.mode !== 'play') return;
-    S.mode = 'ending'; S.endT = 0;
-    incoming.forEach(land); incoming = []; // anything already on its way settles, so the bank reads as full
-    S.endBird = { x: W / 2, y: Lay.skyH };
-    GameKit.sound(300, 0.18, 'sine', 0.06); kit.buzz('heavy');
-    S.shake = 0.25; S.shakeAmp = 3;
+  function birdsLeft() { let n = 0; for (let i = 0; i < N; i++) if (grid[i] && grid[i].kind === 'bird') n++; return n + incoming.length + S.arrivalsLeft; }
+
+  function win() {
+    S.mode = 'clear'; S.t = 0; S.cardT = 0;
+    S.gotStars = S.hearts;
+    S.newStars = S.gotStars > (stars[S.level - 1] | 0);
+    if (S.newStars) { stars[S.level - 1] = S.gotStars; kit.set('stars', stars); }
+    if (S.level > cleared) { cleared = S.level; kit.set('cleared', cleared); }
+    kit.saveBest(cleared);
+    [880, 1100, 1320].forEach((f, k) => setTimeout(() => GameKit.sound(f, 0.1, 'triangle', 0.05), k * 110));
   }
 
-  function gameOver() {
+  function fail() {
     S.mode = 'over'; S.t = 0; S.cardT = 0;
-    S.newBest = kit.saveBest(S.score); S.best = kit.best();
     [660, 520, 390].forEach((f, k) => setTimeout(() => GameKit.sound(f, 0.16, 'triangle', 0.06), k * 150));
   }
 
+  const hitBtn = (x, y) => buttons.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
   const down = (e) => {
     e.preventDefault();
     const x = e.clientX, y = e.clientY;
-    if (S.mode === 'title') { start(); return; }
-    if (S.mode === 'over') { if (S.t > 0.6) start(); return; }
+    const btn = hitBtn(x, y);
+    if (btn) { GameKit.sound(900, 0.04, 'triangle', 0.04); btn.go(); return; }
+    if (S.mode === 'title') { startLevel(S.level); return; }
+    if (S.mode === 'select') return;
+    if (S.mode === 'over') { if (S.t > 0.5) startLevel(S.level); return; }
+    if (S.mode === 'clear') { if (S.t > 0.6) startLevel(S.level < TOTAL ? S.level + 1 : S.level); return; }
     if (S.mode === 'paused') { S.mode = S.prev; return; }
     if (S.mode !== 'play') return;
     const i = cellAt(x, y);
     if (i >= 0) tapCell(i);
   };
   cv.addEventListener('pointerdown', down);
-  kit.onPause(() => { if (S.mode === 'play' || S.mode === 'ending') { S.prev = S.mode; S.mode = 'paused'; } });
-  kit.onResume(() => {});
+  kit.onPause(() => { if (S.mode === 'play') { S.prev = S.mode; S.mode = 'paused'; } });
 
-  // ---------- demo autopilot ----------
+  // ---------- demo autopilot: send off the free bird with the longest flock ----------
   function demoStep() {
     let best = -1, bl = 0;
     for (let i = 0; i < N; i++) {
@@ -328,15 +374,14 @@
       const n = flockFrom(i).length;
       if (n > bl || (n === bl && cells[i].y < cells[best].y)) { bl = n; best = i; }
     }
-    // let the bank fill a little first so the screenshots show a busy bank, then clear the best line
-    let filled = 0; for (let i = 0; i < N; i++) if (grid[i]) filled++;
-    if (best >= 0 && (filled >= 16 || bl >= 2)) fledge(best);
+    if (best >= 0) fledge(best);
   }
 
   // ---------- update ----------
   function update(dt) {
     S.t += dt; S.cardT += dt;
     S.shake = Math.max(0, S.shake - dt);
+    S.heartPop = Math.max(0, (S.heartPop || 0) - dt);
     for (const c of clouds) { c.x += c.v * dt; if (c.x > W + 60) c.x = -60; }
     for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt; p.life -= dt; if (p.star) p.rot += dt * 4; }
     parts = parts.filter((p) => p.life > 0);
@@ -357,42 +402,20 @@
     bonkLines = bonkLines.filter((l) => l.t > 0);
     updateFlyers(dt);
 
-    if (S.mode === 'ending') {
-      S.endT += dt;
-      const T = 1.6, cx = W / 2, cy = Lay.boardTop + (Lay.boardBot - Lay.boardTop) * 0.32, rad = Math.min(W * 0.3, 130);
-      const a = -Math.PI / 2 + (S.endT / T) * Math.PI * 2;
-      S.endBird = { x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad * 0.75, ang: a + Math.PI / 2 };
-      if (S.endT >= T) gameOver();
-      return;
-    }
+    if (S.mode === 'failing') { S.doneT += dt; if (S.doneT > 0.7) fail(); return; }
     if (S.mode !== 'play') return;
-
     S.run += dt;
-    // incoming birds
+    S.banner = Math.max(0, S.banner - dt);
+
     for (const a of incoming) a.t -= dt;
     const landed = incoming.filter((a) => a.t <= 0);
     incoming = incoming.filter((a) => a.t > 0);
     landed.forEach(land);
-    // pebbles crumble
-    for (let i = 0; i < N; i++) {
-      const p = grid[i];
-      if (p && p.kind === 'pebble') {
-        p.age += dt;
-        if (p.age >= 12) { grid[i] = null; puff(cells[i].x, cells[i].y, C.pebble, 10); puff(cells[i].x, cells[i].y, C.crack, 6); GameKit.sound(110, 0.05, 'square', 0.04); }
-      }
+    if (S.arrivalsLeft > 0) {
+      S.nextArrival -= dt;
+      if (S.nextArrival <= 0) { if (spawnArrival()) S.arrivalsLeft--; S.nextArrival = S.lv.P.every; }
     }
-    // arrivals
-    S.nextArrival -= dt;
-    if (S.nextArrival <= 0) { S.nextArrival += arrivalInterval(S.run); spawnArrival(false); if (S.mode !== 'play') return; }
-    // bank-full warning
-    let filled = 0; for (let i = 0; i < N; i++) if (grid[i]) filled++;
-    S.filled = filled;
-    if (filled >= 40) {
-      S.hb -= dt;
-      if (S.hb <= 0) { S.hb = 0.8; S.hbPulse = 1; GameKit.sound(90, 0.1, 'sine', 0.12); }
-    } else S.hb = 0;
-    S.hbPulse = Math.max(0, S.hbPulse - dt * 1.6);
-    // autopilot
+    if (birdsLeft() === 0) { S.doneT += dt; if (S.doneT > 0.55) win(); }
     if (autopilot) { demoT -= dt; if (demoT <= 0) { demoT = 0.45; demoStep(); } }
   }
 
@@ -431,10 +454,8 @@
     if (bg) ctx.drawImage(bg, 0, 0, W, H);
     drawClouds();
     drawRiver();
-    drawMeter();
     drawBoard();
     drawFlyers();
-    if (S.mode === 'ending' && S.endBird) drawBird(S.endBird.x, S.endBird.y, S.endBird.ang, 0.9, Math.floor(S.t * 14) % 2 ? 0.62 : 1, false, 1);
     drawParts();
     drawPopups();
     ctx.restore();
@@ -464,26 +485,8 @@
     }
   }
 
-  function drawMeter() {
-    const gap = Math.min(9, (W - 40) / N), x0 = W / 2 - gap * (N - 1) / 2, y = Lay.skyH + 1.5;
-    let filled = 0; for (let i = 0; i < N; i++) if (grid[i]) filled++;
-    const warn = S.mode === 'play' && filled >= 40;
-    for (let i = 0; i < N; i++) {
-      ctx.beginPath(); ctx.arc(x0 + i * gap, y, i < filled ? 2.4 : 1.9, 0, 7);
-      ctx.fillStyle = i < filled ? C.navy : (warn ? (S.hbPulse > 0.3 ? C.coral : C.cream) : C.cream);
-      ctx.fill();
-    }
-    if (warn) {
-      ctx.globalAlpha = 0.35 + 0.65 * S.hbPulse;
-      ctx.strokeStyle = C.coral; ctx.lineWidth = 5;
-      ctx.strokeRect(2.5, Lay.skyH + 9, W - 5, Lay.riverTop - Lay.skyH - 12);
-      ctx.globalAlpha = 1;
-    }
-  }
-
   function drawBoard() {
     const R = Lay.R;
-    // blocker flashes
     for (let i = 0; i < N; i++) if (flash[i] > 0) {
       ctx.globalAlpha = Math.min(1, flash[i] / 0.15);
       ctx.fillStyle = C.coral; hexPath(ctx, cells[i].x, cells[i].y, R * 0.97); ctx.fill();
@@ -502,12 +505,10 @@
       ctx.fillStyle = '#1d140e';
       ctx.beginPath(); ctx.ellipse(c.x, c.y + 3, R * (0.38 + 0.12 * p), R * (0.26 + 0.08 * p), 0, 0, 7); ctx.fill();
       ctx.globalAlpha = 0.5 + 0.5 * p;
-      if (!a.pebble) {
-        const ang = ANG[a.dir], tx = c.x + Math.cos(ang) * R * 0.56, ty = c.y + Math.sin(ang) * R * 0.56;
-        ctx.save(); ctx.translate(tx, ty); ctx.rotate(ang);
-        ctx.fillStyle = C.cream; ctx.beginPath(); ctx.moveTo(5, 0); ctx.lineTo(-3, -4.5); ctx.lineTo(-3, 4.5); ctx.closePath(); ctx.fill();
-        ctx.restore();
-      }
+      const ang = ANG[a.dir], tx = c.x + Math.cos(ang) * R * 0.56, ty = c.y + Math.sin(ang) * R * 0.56;
+      ctx.save(); ctx.translate(tx, ty); ctx.rotate(ang);
+      ctx.fillStyle = C.cream; ctx.beginPath(); ctx.moveTo(5, 0); ctx.lineTo(-3, -4.5); ctx.lineTo(-3, 4.5); ctx.closePath(); ctx.fill();
+      ctx.restore();
       ctx.globalAlpha = 1;
     }
     // occupants
@@ -515,7 +516,7 @@
       const b = grid[i]; if (!b) continue;
       const c = cells[i];
       const wob = b.wob > 0 ? Math.sin((0.18 - b.wob) * 70) * 4 * (b.wob / 0.18) : 0;
-      const squash = b.land > 0 ? 1 + 0.18 * Math.sin((0.2 - b.land) / 0.2 * Math.PI) : 1;
+      const squash = b.land > 0 ? 1 + 0.18 * Math.sin((0.2 - Math.min(0.2, b.land)) / 0.2 * Math.PI) : 1;
       if (b.kind === 'pebble') drawPebble(c.x + wob, c.y, b, squash);
       else {
         const bob = Math.sin(b.ph) * 0.5;
@@ -533,15 +534,11 @@
       const x0 = a.sx, y0 = a.sy, x1 = c.x, y1 = c.y, cx = x1, cy = y0;
       const u = 1 - e;
       const x = u * u * x0 + 2 * u * e * cx + e * e * x1, y = u * u * y0 + 2 * u * e * cy + e * e * y1;
-      if (a.pebble) {
-        drawPebble(x, y, { age: 0, rot: 0 }, 0.6 + 0.4 * e);
-      } else {
-        const tx = 2 * u * (cx - x0) + 2 * e * (x1 - cx), ty = 2 * u * (cy - y0) + 2 * e * (y1 - cy);
-        const tan = Math.atan2(ty, tx);
-        let d = ANG[a.dir] - tan; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
-        const ang = tan + d * Math.max(0, (e - 0.55) / 0.45);
-        drawBird(x, y, ang, 0.65 + 0.35 * e, Math.floor(S.t * 16) % 2 && e < 0.85 ? 0.62 : 1, false, 1);
-      }
+      const tx = 2 * u * (cx - x0) + 2 * e * (x1 - cx), ty = 2 * u * (cy - y0) + 2 * e * (y1 - cy);
+      const tan = Math.atan2(ty, tx);
+      let d = ANG[a.dir] - tan; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+      const ang = tan + d * Math.max(0, (e - 0.55) / 0.45);
+      drawBird(x, y, ang, 0.65 + 0.35 * e, Math.floor(S.t * 16) % 2 && e < 0.85 ? 0.62 : 1, false, 1);
     }
   }
 
@@ -635,38 +632,85 @@
     return () => ctx.restore();
   }
 
+  function feather(x, y, on, pop) {
+    const s = 1 + pop * 0.6;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(-0.5); ctx.scale(s, s);
+    ctx.beginPath(); ctx.ellipse(0, 0, 4.5, 10, 0, 0, 7);
+    ctx.fillStyle = on ? C.navy : 'rgba(36,50,79,.18)'; ctx.fill();
+    if (on) { ctx.strokeStyle = C.cream; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(0, 12); ctx.stroke(); }
+    ctx.restore();
+  }
+  function starShape(x, y, r, on) {
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+    ctx.closePath(); ctx.fillStyle = on ? C.coral : 'rgba(36,50,79,.14)'; ctx.fill();
+    if (on) { ctx.lineWidth = 2; ctx.strokeStyle = C.navy; ctx.stroke(); }
+  }
+  // buttons are drawn inside a translated tag, so record their screen rect
+  function pill(label, x, y, w, h, go, ox, oy, strong) {
+    ctx.fillStyle = strong ? C.river : C.cream; rrect(x, y, w, h, h / 2); ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = C.navy; ctx.stroke();
+    txt(label, x + w / 2, y + h / 2 + 6, 16, strong ? C.cream : C.navy, { weight: 700, italic: true });
+    buttons.push({ x: x + (ox || 0), y: y + (oy || 0), w, h, go });
+  }
+
   function hud() {
+    buttons = [];
     const skyMid = Lay.safeTop + (Lay.skyH - Lay.safeTop) * 0.5;
     const sunX = W - 52, sunY = Lay.safeTop + (Lay.skyH - Lay.safeTop) * 0.48;
-    // best on the sun
-    txt('BEST', sunX, sunY - 6, 10, C.navy, { weight: 700 });
-    num(S.best, sunX, sunY + 13, 17, C.navy);
-    if (S.mode === 'play' || S.mode === 'ending' || S.mode === 'paused') {
-      num(S.score, W / 2, skyMid + 15, 40, C.navy, 'center', C.sky);
+    const playing = S.mode === 'play' || S.mode === 'failing' || S.mode === 'paused';
+    if (playing) {
+      txt('LEFT', sunX, sunY - 6, 10, C.navy, { weight: 700 });
+      num(birdsLeft(), sunX, sunY + 13, 17, C.navy);
+      txt('Level ' + S.level, W / 2, skyMid + 4, 26, C.navy, { italic: true });
+      for (let k = 0; k < HEARTS; k++) feather(W / 2 - 18 + k * 18, skyMid + 26, k < S.hearts, k === S.hearts ? S.heartPop : 0);
+      if (S.banner > 0 && S.level <= 3) {
+        ctx.globalAlpha = Math.min(1, S.banner / 0.3) * 0.95;
+        const tip = S.level === 3 ? 'Birds in a line fly together' : 'Tap a bird with a clear path out';
+        ctx.fillStyle = C.cream; rrect(W / 2 - 140, Lay.riverTop - 58, 280, 38, 19); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = C.navy; ctx.stroke();
+        txt(tip, W / 2, Lay.riverTop - 33, 15, C.navy, { weight: 700, italic: true });
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      txt('STARS', sunX, sunY - 6, 10, C.navy, { weight: 700 });
+      num(totalStars(), sunX, sunY + 13, 17, C.navy);
     }
     if (S.mode === 'title') {
-      const w = Math.min(320, W - 40), h = 270, cx = W / 2, cy = Lay.boardTop + (Lay.boardBot - Lay.boardTop) * 0.45;
+      const w = Math.min(320, W - 40), h = 320, cx = W / 2, cy = Math.max(Lay.skyH + h / 2 + 8, H * 0.4);
       const done = tag(cx, cy, w, h, S.t);
       txt('Burrowbank', 0, -h / 2 + 76, 42, C.navy, { italic: true });
       ctx.fillStyle = C.river; ctx.fillRect(-46, -h / 2 + 92, 92, 3);
       txt('Tap a bird with open sky.', 0, -h / 2 + 126, 17, C.navy, { weight: 600 });
       txt('Birds in a line fly together.', 0, -h / 2 + 150, 17, C.navy, { weight: 600 });
-      txt('Do not let the bank fill up.', 0, -h / 2 + 174, 15, '#5a6478', { weight: 500, italic: true });
+      txt('Empty the bank to clear the level.', 0, -h / 2 + 174, 15, '#5a6478', { weight: 500, italic: true });
       ctx.globalAlpha = 0.55 + 0.45 * Math.sin(S.t * 4);
-      txt('Tap to start', 0, h / 2 - 50, 22, C.river, { italic: true });
+      txt('Tap to play level ' + S.level, 0, h / 2 - 96, 21, C.river, { italic: true });
       ctx.globalAlpha = 1;
-      if (S.best) txt('Best ' + S.best, 0, h / 2 - 22, 15, C.navy, { weight: 600 });
+      txt(cleared + ' of ' + TOTAL + ' levels cleared', 0, h / 2 - 70, 14, C.navy, { weight: 600 });
+      pill('Levels', -64, h / 2 - 54, 128, 38, openSelect, cx, cy);
       done();
     }
-    if (S.mode === 'over') {
+    if (S.mode === 'over' || S.mode === 'clear') {
       ctx.fillStyle = 'rgba(36,50,79,.28)'; ctx.fillRect(0, 0, W, H);
-      const w = Math.min(320, W - 40), h = 290, cx = W / 2, cy = H * 0.48;
+      const w = Math.min(320, W - 40), h = 300, cx = W / 2, cy = Math.max(Lay.skyH + h / 2 + 8, H * 0.4);
       const done = tag(cx, cy, w, h, S.cardT);
-      txt('The bank is full', 0, -h / 2 + 64, 29, C.navy, { italic: true });
-      num(S.score, 0, -h / 2 + 136, 60, C.navy);
-      txt(S.newBest ? 'New best!' : 'Best ' + S.best, 0, -h / 2 + 168, 18, S.newBest ? C.coral : C.navy, { weight: 700, italic: S.newBest });
-      txt(S.sent + ' birds sent off  ·  biggest flock ' + S.bigFlock, 0, -h / 2 + 198, 14, '#5a6478', { weight: 500 });
-      if (S.t > 0.6) { ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 4); txt('Tap to try again', 0, h / 2 - 30, 21, C.river, { italic: true }); ctx.globalAlpha = 1; }
+      if (S.mode === 'over') {
+        txt('Out of feathers', 0, -h / 2 + 66, 29, C.navy, { italic: true });
+        txt('Level ' + S.level, 0, -h / 2 + 100, 18, C.navy, { weight: 700 });
+        txt(S.sent + ' of ' + (S.sent + birdsLeft()) + ' birds sent off', 0, -h / 2 + 128, 14, '#5a6478', { weight: 500 });
+        txt('A blocked tap costs a feather.', 0, -h / 2 + 150, 14, '#5a6478', { weight: 500, italic: true });
+        if (S.t > 0.5) { ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 4); txt('Tap to try again', 0, h / 2 - 76, 21, C.river, { italic: true }); ctx.globalAlpha = 1; }
+      } else {
+        const last = S.level === TOTAL;
+        txt(last ? 'Every bank is empty!' : 'Level ' + S.level + ' cleared', 0, -h / 2 + 66, 27, C.navy, { italic: true });
+        for (let k = 0; k < 3; k++) {
+          const pop = clamp((S.cardT - 0.2 - k * 0.18) / 0.2, 0, 1);
+          starShape((k - 1) * 46, -h / 2 + 116, 18 * (0.4 + 0.6 * pop), k < S.gotStars && pop > 0);
+        }
+        txt(S.sent + ' birds  ·  biggest flock ' + S.bigFlock + (S.newStars ? '  ·  new best' : ''), 0, -h / 2 + 160, 14, '#5a6478', { weight: 500 });
+        if (S.t > 0.6) { ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 4); txt(last ? 'Tap to play it again' : 'Tap for level ' + (S.level + 1), 0, h / 2 - 76, 21, C.river, { italic: true }); ctx.globalAlpha = 1; }
+      }
+      pill('Levels', -60, h / 2 - 56, 120, 38, openSelect, cx, cy);
       done();
     }
     if (S.mode === 'paused') {
@@ -676,6 +720,37 @@
       txt('Tap to carry on', 0, 40, 15, C.river, { weight: 600 });
       done();
     }
+    if (S.mode === 'select') drawSelect();
+  }
+
+  // ---------- level select ----------
+  const PER = 25;
+  function openSelect() { S.mode = 'select'; S.page = Math.floor((unlocked() - 1) / PER); }
+  function drawSelect() {
+    ctx.fillStyle = 'rgba(36,50,79,.4)'; ctx.fillRect(0, 0, W, H);
+    const cols = 5, gap = 8, size = Math.min(54, (W - 72 - gap * (cols - 1)) / cols);
+    const gw = cols * size + (cols - 1) * gap, w = gw + 36, h = 5 * (size + gap) + 196;
+    const cx = W / 2, cy = clamp(H / 2, h / 2 + Lay.safeTop + 8, H - h / 2 - 8);
+    const done = tag(cx, cy, w, h, 1);
+    txt('Choose a level', 0, -h / 2 + 52, 26, C.navy, { italic: true });
+    txt(cleared + ' cleared  ·  ' + totalStars() + ' of ' + TOTAL * 3 + ' stars', 0, -h / 2 + 76, 13, '#5a6478', { weight: 600 });
+    const x0 = -gw / 2, y0 = -h / 2 + 92;
+    for (let k = 0; k < PER; k++) {
+      const n = S.page * PER + k + 1, x = x0 + (k % cols) * (size + gap), y = y0 + Math.floor(k / cols) * (size + gap);
+      const open = n <= unlocked(), isDone = n <= cleared, cur = n === S.level && open;
+      ctx.fillStyle = cur ? C.river : (open ? C.sandTop : '#e6e1d4'); rrect(x, y, size, size, 10); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = open ? C.navy : '#c9c3b4'; ctx.stroke();
+      if (open) num(n, x + size / 2, y + size / 2 + (isDone ? 3 : 7), 19, cur ? C.cream : C.navy);
+      else { ctx.fillStyle = '#c9c3b4'; ctx.beginPath(); ctx.arc(x + size / 2, y + size / 2, 3, 0, 7); ctx.fill(); }
+      if (isDone) for (let s = 0; s < 3; s++) starShape(x + size / 2 + (s - 1) * 11, y + size - 9, 4.5, s < (stars[n - 1] | 0));
+      if (open) buttons.push({ x: x + cx, y: y + cy, w: size, h: size, go: () => startLevel(n) });
+    }
+    const by = y0 + 5 * (size + gap) + 6;
+    txt((S.page * PER + 1) + '–' + (S.page * PER + PER), 0, by + 25, 15, C.navy, { weight: 700 });
+    if (S.page > 0) pill('‹', x0, by, 52, 38, () => { S.page--; }, cx, cy);
+    if (S.page < TOTAL / PER - 1) pill('›', x0 + gw - 52, by, 52, 38, () => { S.page++; }, cx, cy);
+    pill('Close', -56, by + 50, 112, 38, () => { S.mode = 'title'; S.t = 0; }, cx, cy, true);
+    done();
   }
 
   // ---------- loop ----------
@@ -688,10 +763,13 @@
   }
   requestAnimationFrame(frame);
 
-  // test + screenshot hook
+  // test + screenshot hook ('clear' reports as 'over': a tap moves on to the next level)
   window.__game = {
-    state: () => ({ mode: S.mode === 'ending' ? 'play' : S.mode, score: S.score }),
-    demo: (on) => { autopilot = !!on; demoT = 0.3; }
+    state: () => ({ mode: S.mode === 'failing' ? 'play' : (S.mode === 'clear' ? 'over' : (S.mode === 'select' ? 'title' : S.mode)), score: S.sent, level: S.level, cleared, won: S.mode === 'clear' }),
+    demo: (on) => { autopilot = !!on; demoT = 0.3; },
+    level: (n) => startLevel(n),
+    sim: (sec) => { for (let k = 0; k < sec * 60 && S.mode === 'play'; k++) update(1 / 60); return S.mode; },
+    info: (n) => { const l = buildLevel(n); return { birds: l.birds, want: l.P.birds, pebbles: l.P.pebbles, arrivals: l.P.arrivals }; }
   };
 })();
 </script>

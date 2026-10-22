@@ -1,9 +1,9 @@
 {
   "appName": "Burrowbank",
   "subtitle": "Send the swallows flying",
-  "description": "A sunny riverbank is full of little burrows, and every burrow holds a swallow facing one way. Tap a bird whose path to the edge is clear and it darts out into the sky.\n\nThe twist: birds in a line fly together. When a bird leaves, any bird right behind it facing the same way follows it out, and the next one after that. Spot the longest line, free the bird at the front, and watch the whole flock go. Bigger flocks score far more.\n\nThe bank never stops filling. New swallows keep swooping in to land, the pace picks up, and late in a run stray pebbles block your lines. Tap a bird that is boxed in and another one lands as a penalty. Fill every burrow and the run is over, so keep the sky busy and chase your best score.\n\nSix directions on a hex board, one tap to play, and quick runs that get tense fast. Plays offline. No ads. No tracking. No in-app purchases.",
-  "keywords": "birds,arrow,hexagon,flock,swallow,nest,logic,brain,tap,offline,calm,nature,riverbank,clear",
-  "promo": "Tap a swallow with a clear path and it flies off. Line birds up and a whole flock leaves at once. Keep the riverbank from filling up.",
+  "description": "A sunny riverbank is full of little burrows, and every burrow holds a swallow facing one way. Tap a bird whose path to the edge is clear and it darts out into the sky. Send every bird off and the level is done.\n\nThe twist: birds in a line fly together. When a bird leaves, any bird right behind it facing the same way follows it out. Free the bird at the front and watch the whole flock go.\n\nTap a bird that is boxed in and it bonks its head and you lose a feather. Lose three and you try the level again. Clear it without a bonk for three stars.\n\n100 short levels on a six-direction hex board. The bank grows as you go, stones start blocking paths, and later on new swallows swoop in while you work. Every level can always be solved.\n\nPlays offline. No ads. No tracking. No in-app purchases.",
+  "keywords": "birds,arrow,hexagon,flock,swallow,nest,logic,brain,tap,offline,calm,levels,riverbank,clear",
+  "promo": "100 quick hex puzzles: tap a swallow with a clear path and it flies off. Lines of birds leave together.",
   "category": "GAMES_PUZZLE",
-  "reviewNote": "Tap to start. Tap a bird whose path to the edge of the bank is clear and it flies away; birds behind it facing the same way follow. The game ends when every burrow is full."
+  "reviewNote": "Tap to start level 1. Tap a bird whose path to the edge of the bank is clear and it flies away; birds behind it facing the same way follow. Clear every bird to finish the level. A blocked tap costs one of three feathers. Tap Levels to pick any unlocked level."
 }

@@ -17,33 +17,83 @@
   const kit = GameKit.init({ slug: 'lantern-drift' });
   const cv = document.getElementById('c');
   let W = 0, H = 0, ctx = null;
+  const TOTAL = 100;
+
+  // ---------- progress (saved on device) ----------
+  let cleared = Math.min(TOTAL, kit.get('cleared', 0) | 0);   // levels 1..cleared are beaten
+  let stars = kit.get('stars', []);                           // stars[n-1] = best stars on level n
+  if (!Array.isArray(stars)) stars = [];
+  const unlocked = () => Math.min(TOTAL, cleared + 1);
+  const totalStars = () => stars.reduce((a, b) => a + (b | 0), 0);
 
   // ---------- state ----------
-  const S = { mode: 'title', cause: '', t: 0, dist: 0, flies: 0, score: 0, best: kit.best(), speed: 150, newBest: false, shake: 0 };
+  const S = { mode: 'title', cause: '', t: 0, dist: 0, flies: 0, level: unlocked(), shake: 0, gotStars: 0, newStars: false, page: 0, banner: 0 };
   const L = { x: 0, y: 0, vy: 0, flame: 1, r: 16 };
-  let holding = false, autopilot = false, branches = [], fireflies = [], sparks = [], stars = [], hills = [];
-  let nextBranch = 0, nextFly = 0;
+  let holding = false, autopilot = false, course = null, sparks = [], stars2 = [], hills = [], buttons = [];
 
   function buildStars() {
-    stars = []; for (let i = 0; i < 70; i++) stars.push({ x: Math.random() * W, y: Math.random() * H * 0.75, r: Math.random() * 1.4 + 0.3, p: Math.random() * 6 });
+    stars2 = []; for (let i = 0; i < 70; i++) stars2.push({ x: Math.random() * W, y: Math.random() * H * 0.75, r: Math.random() * 1.4 + 0.3, p: Math.random() * 6 });
     hills = []; for (let i = 0; i < 8; i++) hills.push({ x: i * W / 4, h: 40 + Math.random() * 60 });
   }
+  ctx = kit.fitCanvas(cv, (s) => { W = s.w; H = s.h; buildStars(); if (course) course = buildLevel(S.level); });
 
-  ctx = kit.fitCanvas(cv, (s) => { W = s.w; H = s.h; buildStars(); });
+  // ---------- levels: seeded so each level is the same every time ----------
+  function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const TOP = 96, WATER = () => H - 70;
 
-  function reset() {
-    L.x = W * 0.3; L.y = H * 0.45; L.vy = 0; L.flame = 1;
-    branches = []; fireflies = []; sparks = [];
-    S.t = 0; S.dist = 0; S.flies = 0; S.score = 0; S.speed = 150; S.newBest = false;
-    nextBranch = 0.8; nextFly = 0.4;
+  function levelParams(n) {
+    const d = (n - 1) / (TOTAL - 1);
+    return {
+      gates: 4 + Math.round(n * 0.2),                 // 4 on level 1, 24 on level 100
+      speed: 140 + 90 * d,                            // px/s
+      spacing: 360 - 80 * d,                          // px between gates
+      gap: Math.min(270 - 105 * d, (WATER() - TOP) * 0.42),
+      jump: Math.min(70 + 120 * d, 120 * (360 - 80 * d) / (140 + 90 * d)),   // how far the gap moves gate to gate, always flyable
+      sway: n < 25 ? 0 : Math.min(0.75, (n - 20) / 100),   // share of gates that sway up and down
+      swayAmp: 14 + 22 * d,
+      drainHold: 0.055 + 0.035 * d, drainIdle: 0.02 + 0.016 * d
+    };
   }
-  reset();
+
+  function buildLevel(n) {
+    const P = levelParams(n), r = rng(n * 7919 + 13);
+    const gates = [], flies = [];
+    const lo = TOP + P.gap / 2 + 16, hi = WATER() - 24 - P.gap / 2;
+    let x = 460, y = (lo + hi) / 2;
+    let prevY = H * 0.45, prevAmp = 0;
+    for (let k = 0; k < P.gates; k++) {
+      const sway = r() < P.sway ? { amp: Math.min(P.swayAmp, (hi - lo) / 2), sp: 0.8 + r() * 0.6, ph: r() * 6.28 } : null;
+      const amp = sway ? sway.amp : 0, reach = Math.max(20, P.jump - amp - prevAmp);   // sway eats into the jump, so it stays flyable
+      const ny = Math.max(lo + amp, Math.min(hi - amp, y + (r() * 2 - 1) * reach));
+      prevAmp = amp;
+      gates.push({ x, c: ny, gap: P.gap, w: 26, sway, swayVis: r() * 6, passed: false });
+      // a firefly floats in the open water before each gate, on the way from the last gap to this one
+      flies.push({ x: x - P.spacing * 0.5, y: (prevY + ny) / 2 + (r() * 2 - 1) * 20, p: r() * 6, got: false });
+      prevY = ny; y = ny; x += P.spacing;
+    }
+    return { n, P, gates, flies, finish: x - P.spacing * 0.35, total: flies.length };
+  }
+  const gapCenter = (g, t) => g.sway ? g.c + Math.sin(t * g.sway.sp + g.sway.ph) * g.sway.amp : g.c;
+
+  function startLevel(n) {
+    S.level = Math.max(1, Math.min(unlocked(), n));
+    course = buildLevel(S.level);
+    L.x = W * 0.3; L.y = H * 0.45; L.vy = 0; L.flame = 1;
+    sparks = []; S.t = 0; S.dist = 0; S.flies = 0; S.banner = 1.6;
+    S.mode = 'play'; holding = false; kit.buzz();
+  }
 
   // ---------- input ----------
+  const hit = (x, y) => buttons.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
   const down = (e) => {
     e.preventDefault();
-    if (S.mode === 'title') { S.mode = 'play'; reset(); kit.buzz(); }
-    else if (S.mode === 'over') { if (S.t > 0.6) { S.mode = 'play'; reset(); kit.buzz(); } }
+    const b = hit(e.clientX, e.clientY);
+    if (b) { GameKit.sound(700, 0.05, 'triangle', 0.04); b.go(); return; }
+    if (S.mode === 'title') startLevel(S.level);
+    else if (S.mode === 'select') return;
+    else if (S.mode === 'over') { if (S.t > 0.5) startLevel(S.level); }
+    else if (S.mode === 'clear') { if (S.t > 0.6) startLevel(S.level < TOTAL ? S.level + 1 : S.level); }
+    else if (S.mode === 'paused') S.mode = 'play';
     holding = true;
   };
   const up = () => { holding = false; };
@@ -51,18 +101,7 @@
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', up);
   kit.onPause(() => { if (S.mode === 'play') S.mode = 'paused'; holding = false; });
-  kit.onResume(() => { if (S.mode === 'paused') S.mode = 'play'; });
 
-  // ---------- spawning ----------
-  function spawnBranch() {
-    const gap = Math.max(150, 240 - S.dist / 40);
-    const minY = 110, maxY = H - 140 - gap;
-    const top = minY + Math.random() * Math.max(10, maxY - minY);
-    branches.push({ x: W + 40, top, gap, w: 26, sway: Math.random() * 6, passed: false });
-  }
-  function spawnFly() {
-    fireflies.push({ x: W + 20, y: 120 + Math.random() * (H - 280), p: Math.random() * 6, got: false });
-  }
   function burst(x, y, col, n) {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2, s = 40 + Math.random() * 140;
@@ -71,28 +110,44 @@
   }
 
   function die(cause) {
-    S.cause = cause || 'snag'; S.mode = 'over'; S.t = 0; S.shake = 14; kit.buzz('heavy');
+    S.cause = cause; S.mode = 'over'; S.t = 0; S.shake = 14; kit.buzz('heavy');
     GameKit.sound(140, 0.35, 'sawtooth', 0.06);
     burst(L.x, L.y, '#ffb35c', 40);
-    S.newBest = kit.saveBest(S.score); S.best = kit.best();
+  }
+
+  function win() {
+    S.mode = 'clear'; S.t = 0; kit.buzz('medium');
+    const f = S.flies / course.total;
+    S.gotStars = f >= 0.999 ? 3 : (f >= 0.5 ? 2 : 1);
+    S.newStars = S.gotStars > (stars[S.level - 1] | 0);
+    if (S.newStars) { stars[S.level - 1] = S.gotStars; kit.set('stars', stars); }
+    if (S.level > cleared) { cleared = S.level; kit.set('cleared', cleared); }
+    kit.saveBest(cleared);
+    burst(L.x, L.y, '#f8f39a', 50); burst(L.x, L.y, '#ffb35c', 30);
+    [660, 880, 1100].forEach((fq, k) => setTimeout(() => GameKit.sound(fq, 0.12, 'triangle', 0.05), k * 110));
   }
 
   // ---------- update ----------
+  const sx = (wx) => wx - S.dist + L.x;   // world x to screen x
+
   function update(dt) {
     S.t += dt;
     for (const s of sparks) { s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 160 * dt; s.life -= dt; }
     sparks = sparks.filter((s) => s.life > 0);
     S.shake = Math.max(0, S.shake - 40 * dt);
-    if (S.mode !== 'play') { if (S.mode === 'title') { L.y = H * 0.45 + Math.sin(S.t * 2) * 10; } return; }
+    if (S.mode === 'clear') { L.y += (H * 0.45 - L.y) * dt * 2; S.dist += 60 * dt; return; }
+    if (S.mode !== 'play') { if (S.mode === 'title' || S.mode === 'select') { L.x = W * 0.3; L.y = H * 0.45 + Math.sin(S.t * 2) * 10; } return; }
+    S.banner = Math.max(0, S.banner - dt);
+    const P = course.P;
 
     if (autopilot) { // screenshot demo: aim for the next gap or firefly
-      const b = branches.find((x) => x.x + x.w > L.x - 10);
-      const f = fireflies.find((x) => x.x > L.x && x.x < L.x + 160);
-      const target = b && b.x - L.x < 340 ? b.top + b.gap / 2 : (f ? f.y : H * 0.45);
+      const g = course.gates.find((x) => sx(x.x) + x.w > L.x - 10);
+      const f = course.flies.find((x) => !x.got && sx(x.x) > L.x && sx(x.x) < L.x + 160);
+      const ahead = g ? (sx(g.x) - L.x) / P.speed : 0;
+      const target = g && sx(g.x) - L.x < 300 ? gapCenter(g, S.t + Math.max(0, ahead)) : (f ? f.y : (g ? gapCenter(g, S.t + ahead) : H * 0.45));
       holding = (L.y - target) + 0.3 * L.vy > 0;
     }
-    S.speed = 150 + Math.min(170, S.dist / 25);
-    S.dist += S.speed * dt;
+    S.dist += P.speed * dt;
 
     const lift = holding && L.flame > 0 ? -900 : 0;
     const ease = Math.min(1, 0.25 + S.t / 1.5); // gentle gravity for the first moments
@@ -100,50 +155,44 @@
     L.vy = Math.max(-360, Math.min(420, L.vy));
     L.y += L.vy * dt;
 
-    // flame burns faster while holding, and faster the further you go
-    L.flame -= dt * ((holding ? 0.075 : 0.03) + S.dist / 400000);
-    if (L.flame <= 0) { L.flame = 0; }
+    L.flame = Math.max(0, L.flame - dt * (holding ? P.drainHold : P.drainIdle));
 
-    nextBranch -= dt; nextFly -= dt;
-    if (nextBranch <= 0) { spawnBranch(); nextBranch = Math.max(0.95, 1.7 - S.dist / 9000) * (150 / S.speed) * 1.6; }
-    if (nextFly <= 0) { spawnFly(); nextFly = 0.7 + Math.random() * 0.9; }
-
-    for (const b of branches) {
-      b.x -= S.speed * dt;
-      if (!b.passed && b.x + b.w < L.x) { b.passed = true; S.score += 1; GameKit.sound(660, 0.06, 'triangle', 0.04); }
-      const inX = L.x + L.r * 0.7 > b.x && L.x - L.r * 0.7 < b.x + b.w;
-      if (inX && (L.y - L.r * 0.8 < b.top || L.y + L.r * 0.8 > b.top + b.gap)) return die('snag');
+    for (const g of course.gates) {
+      const x = sx(g.x);
+      if (x > W + 60 || x < -60) continue;
+      if (!g.passed && x + g.w < L.x) { g.passed = true; GameKit.sound(660, 0.06, 'triangle', 0.04); }
+      const c = gapCenter(g, S.t), top = c - g.gap / 2, bot = c + g.gap / 2;
+      const inX = L.x + L.r * 0.7 > x && L.x - L.r * 0.7 < x + g.w;
+      if (inX && (L.y - L.r * 0.8 < top || L.y + L.r * 0.8 > bot)) return die('snag');
     }
-    branches = branches.filter((b) => b.x > -60);
-
-    for (const f of fireflies) {
-      f.x -= S.speed * 0.85 * dt; f.p += dt * 4;
-      const fy = f.y + Math.sin(f.p) * 8;
-      if (!f.got && Math.hypot(f.x - L.x, fy - L.y) < L.r + 14) {
-        f.got = true; S.flies++; S.score += 3; L.flame = Math.min(1, L.flame + 0.22);
-        burst(f.x, fy, '#f8f39a', 12); kit.buzz(); GameKit.sound(880 + Math.random() * 220, 0.08, 'sine', 0.05);
+    for (const f of course.flies) {
+      if (f.got) continue;
+      f.p += dt * 4;
+      const fx = sx(f.x), fy = f.y + Math.sin(f.p) * 8;
+      if (Math.hypot(fx - L.x, fy - L.y) < L.r + 16) {
+        f.got = true; S.flies++; L.flame = Math.min(1, L.flame + 0.25);
+        burst(fx, fy, '#f8f39a', 12); kit.buzz(); GameKit.sound(880 + Math.random() * 220, 0.08, 'sine', 0.05);
       }
     }
-    fireflies = fireflies.filter((f) => f.x > -20 && !f.got);
-
-    if (L.y > H - 70) return die('water');
+    if (sx(course.finish) <= L.x) return win();
+    if (L.y > WATER()) return die(L.flame <= 0 ? 'dark' : 'water');
     if (L.y < 40) { L.y = 40; L.vy = Math.max(0, L.vy); }
   }
 
   // ---------- draw ----------
   function draw() {
-    const sx = (Math.random() - 0.5) * S.shake, sy = (Math.random() - 0.5) * S.shake;
-    ctx.save(); ctx.translate(sx, sy);
+    const shx = (Math.random() - 0.5) * S.shake, shy = (Math.random() - 0.5) * S.shake;
+    ctx.save(); ctx.translate(shx, shy);
     const g = ctx.createLinearGradient(0, 0, 0, H);
     g.addColorStop(0, '#0d1230'); g.addColorStop(0.6, '#2a2457'); g.addColorStop(1, '#5a3a62');
     ctx.fillStyle = g; ctx.fillRect(-20, -20, W + 40, H + 40);
 
-    for (const s of stars) { ctx.globalAlpha = 0.4 + 0.4 * Math.sin(S.t * 1.5 + s.p); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill(); }
+    for (const s of stars2) { ctx.globalAlpha = 0.4 + 0.4 * Math.sin(S.t * 1.5 + s.p); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill(); }
     ctx.globalAlpha = 1;
 
     // moon
-    ctx.fillStyle = '#fbe9c4'; ctx.beginPath(); ctx.arc(W * 0.8, H * 0.16, 34, 0, 7); ctx.fill();
-    ctx.fillStyle = '#2a2457'; ctx.beginPath(); ctx.arc(W * 0.8 + 14, H * 0.16 - 8, 30, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fbe9c4'; ctx.beginPath(); ctx.arc(W * 0.8, H * 0.2, 34, 0, 7); ctx.fill();
+    ctx.fillStyle = '#2a2457'; ctx.beginPath(); ctx.arc(W * 0.8 + 14, H * 0.2 - 8, 30, 0, 7); ctx.fill();
 
     // far hills (parallax)
     const off = (S.dist * 0.2) % (W / 4);
@@ -157,33 +206,63 @@
     ctx.strokeStyle = 'rgba(255,200,140,.18)'; ctx.lineWidth = 2;
     for (let i = 0; i < 6; i++) { const wy = H - 50 + i * 9; const wx = ((S.t * 30 + i * 70) % (W + 80)) - 40; ctx.beginPath(); ctx.moveTo(W - wx, wy); ctx.lineTo(W - wx + 26, wy); ctx.stroke(); }
 
-    // branches: willow strands hanging from top, reeds rising from bottom
-    for (const b of branches) {
-      ctx.fillStyle = '#0b0f22';
-      roundRect(b.x, -10, b.w, b.top + 10, 10); ctx.fill();
-      roundRect(b.x, b.top + b.gap, b.w, H - b.top - b.gap, 10); ctx.fill();
-      ctx.strokeStyle = '#3f6b5a'; ctx.lineWidth = 3;
-      for (let k = 0; k < 4; k++) {
-        const lx = b.x + 4 + k * 6, sw = Math.sin(S.t * 2 + b.sway + k) * 4;
-        ctx.beginPath(); ctx.moveTo(lx, b.top - 4); ctx.quadraticCurveTo(lx + sw, b.top + 10, lx + sw * 1.5, b.top + 18 + k * 3); ctx.stroke();
+    if (course && S.mode !== 'title' && S.mode !== 'select') {
+      drawPier();
+      // gates: willow strands hanging from top, reeds rising from bottom
+      for (const b of course.gates) {
+        const x = sx(b.x); if (x > W + 40 || x < -40) continue;
+        const c = gapCenter(b, S.t), top = c - b.gap / 2;
+        ctx.fillStyle = '#0b0f22';
+        roundRect(x, -10, b.w, top + 10, 10); ctx.fill();
+        roundRect(x, top + b.gap, b.w, H - top - b.gap, 10); ctx.fill();
+        ctx.strokeStyle = b.sway ? '#5f8f6e' : '#3f6b5a'; ctx.lineWidth = 3;
+        for (let k = 0; k < 4; k++) {
+          const lx = x + 4 + k * 6, sw = Math.sin(S.t * 2 + b.swayVis + k) * 4;
+          ctx.beginPath(); ctx.moveTo(lx, top - 4); ctx.quadraticCurveTo(lx + sw, top + 10, lx + sw * 1.5, top + 18 + k * 3); ctx.stroke();
+        }
+      }
+      // fireflies
+      for (const f of course.flies) {
+        if (f.got) continue;
+        const fx = sx(f.x); if (fx > W + 20 || fx < -20) continue;
+        const fy = f.y + Math.sin(f.p) * 8;
+        const rg = ctx.createRadialGradient(fx, fy, 0, fx, fy, 16);
+        rg.addColorStop(0, 'rgba(250,245,160,.95)'); rg.addColorStop(1, 'rgba(250,245,160,0)');
+        ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(fx, fy, 16, 0, 7); ctx.fill();
       }
     }
 
-    // fireflies
-    for (const f of fireflies) {
-      const fy = f.y + Math.sin(f.p) * 8;
-      const rg = ctx.createRadialGradient(f.x, fy, 0, f.x, fy, 16);
-      rg.addColorStop(0, 'rgba(250,245,160,.95)'); rg.addColorStop(1, 'rgba(250,245,160,0)');
-      ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(f.x, fy, 16, 0, 7); ctx.fill();
-    }
-
-    // lantern
     if (S.mode !== 'over') drawLantern();
 
     for (const s of sparks) { ctx.globalAlpha = Math.max(0, s.life); ctx.fillStyle = s.col; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
     ctx.globalAlpha = 1;
     ctx.restore();
     hud();
+  }
+
+  // the finish: a wooden pier with a lamp post and a string of paper lanterns
+  function drawPier() {
+    const x = sx(course.finish);
+    if (x > W + 120 || x < -200) return;
+    const wy = WATER();
+    ctx.fillStyle = '#3a2a30';
+    ctx.fillRect(x - 6, wy - 8, W - x + 220, 10);
+    for (let k = 0; k < 6; k++) ctx.fillRect(x + k * 34, wy - 2, 6, 40);
+    ctx.fillStyle = '#4a3540'; ctx.fillRect(x - 4, TOP - 30, 8, wy - TOP + 24);
+    // lamp on top
+    const pulse = 0.75 + 0.25 * Math.sin(S.t * 3);
+    const rg = ctx.createRadialGradient(x, TOP - 34, 0, x, TOP - 34, 70);
+    rg.addColorStop(0, 'rgba(255,190,110,' + (0.55 * pulse) + ')'); rg.addColorStop(1, 'rgba(255,190,110,0)');
+    ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(x, TOP - 34, 70, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ffd59a'; ctx.beginPath(); ctx.arc(x, TOP - 34, 9, 0, 7); ctx.fill();
+    // string of little lanterns down to the pier: the finish line
+    ctx.strokeStyle = 'rgba(255,220,170,.5)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x, TOP - 26); ctx.lineTo(x, wy - 8); ctx.stroke();
+    const n = Math.max(4, Math.floor((wy - TOP) / 46));
+    for (let k = 0; k < n; k++) {
+      const ly = TOP + (k + 0.5) * (wy - TOP - 10) / n, cols = ['#f2a65a', '#e86f6f', '#f8f39a'];
+      ctx.fillStyle = cols[k % 3]; ctx.beginPath(); ctx.ellipse(x + Math.sin(S.t * 2 + k) * 2, ly, 7, 9, 0, 0, 7); ctx.fill();
+    }
   }
 
   function drawLantern() {
@@ -209,45 +288,118 @@
     ctx.textAlign = align || 'center'; ctx.fillStyle = col || '#fff'; ctx.fillText(t, x, y);
   }
 
+  function star(x, y, r, on) {
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+    ctx.closePath(); ctx.fillStyle = on ? '#f8f39a' : 'rgba(255,255,255,.14)'; ctx.fill();
+  }
+
+  function button(label, x, y, w, h, go, strong) {
+    ctx.fillStyle = strong ? '#f2a65a' : 'rgba(255,255,255,.1)'; roundRect(x, y, w, h, h / 2); ctx.fill();
+    text(label, x + w / 2, y + h / 2 + 6, 16, strong ? '#2a1a12' : '#ffd9a8', 'center', 700);
+    buttons.push({ x, y, w, h, go });
+  }
+
   function hud() {
+    buttons = [];
     const top = 64;
     if (S.mode === 'play' || S.mode === 'paused') {
-      text(String(S.score), W / 2, top + 26, 40, '#fff4dd');
+      text('Level ' + S.level, W / 2, top - 22, 15, '#cbb8ec', 'center', 600);
+      // trip progress: how far along the lake to the pier
+      const pw = Math.min(200, W - 150), px = (W - pw) / 2, py = top - 8, k = Math.min(1, S.dist / course.finish);
+      ctx.fillStyle = 'rgba(255,255,255,.12)'; roundRect(px, py, pw, 6, 3); ctx.fill();
+      ctx.fillStyle = '#ffd9a8'; roundRect(px, py, Math.max(6, pw * k), 6, 3); ctx.fill();
+      ctx.fillStyle = '#ffd59a'; ctx.beginPath(); ctx.arc(px + pw, py + 3, 5, 0, 7); ctx.fill();
+      text(S.flies + ' / ' + course.total, 20, top + 30, 15, '#f8f39a', 'left', 700);
       // flame meter
-      const mw = Math.min(160, W * 0.4), mx = W - mw - 16, my = top - 30;
+      const mw = Math.min(110, W * 0.28), mx = W - mw - 16, my = top + 20;
       ctx.fillStyle = 'rgba(0,0,0,.3)'; roundRect(mx, my, mw, 10, 5); ctx.fill();
       ctx.fillStyle = L.flame > 0.25 ? '#f2a65a' : '#ff6b5c'; roundRect(mx, my, Math.max(6, mw * L.flame), 10, 5); ctx.fill();
-      if (S.mode === 'paused') text('Paused', W / 2, H / 2, 30, '#fff');
+      if (S.banner > 0) {
+        ctx.globalAlpha = Math.min(1, S.banner / 0.4);
+        text('Level ' + S.level, W / 2, H * 0.3, 34, '#fff4dd', 'center', 800);
+        text('Fly to the lit pier', W / 2, H * 0.3 + 30, 15, '#cbb8ec', 'center', 500);
+        ctx.globalAlpha = 1;
+      }
+      if (S.mode === 'paused') text('Paused · tap to carry on', W / 2, H / 2, 22, '#fff');
     }
     if (S.mode === 'title') {
-      text('Lantern Drift', W / 2, H * 0.27, 44, '#fff4dd', 'center', 800);
-      text('Hold to rise. Let go to fall.', W / 2, H * 0.27 + 40, 17, '#e8d7ff', 'center', 500);
-      text('Catch fireflies to keep your flame alive.', W / 2, H * 0.27 + 64, 15, '#cbb8ec', 'center', 500);
-      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 4); text('Tap to start', W / 2, H * 0.72, 22, '#ffd9a8'); ctx.globalAlpha = 1;
-      if (S.best) text('Best ' + S.best, W / 2, H * 0.72 + 34, 15, '#cbb8ec', 'center', 500);
+      text('Lantern Drift', W / 2, H * 0.24, 44, '#fff4dd', 'center', 800);
+      text('Hold to rise. Let go to fall.', W / 2, H * 0.24 + 40, 17, '#e8d7ff', 'center', 500);
+      text('Reach the lit pier. Catch the fireflies.', W / 2, H * 0.24 + 64, 15, '#cbb8ec', 'center', 500);
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 4); text('Tap to fly level ' + S.level, W / 2, H * 0.68, 22, '#ffd9a8'); ctx.globalAlpha = 1;
+      text(cleared + ' of ' + TOTAL + ' levels  ·  ' + totalStars() + ' stars', W / 2, H * 0.68 + 32, 14, '#cbb8ec', 'center', 500);
+      button('Levels', W / 2 - 70, H * 0.68 + 54, 140, 42, openSelect);
     }
     if (S.mode === 'over') {
-      const cw = Math.min(300, W - 48), ch = 210, cx = (W - cw) / 2, cy = H * 0.3;
+      const cw = Math.min(300, W - 48), ch = 230, cx = (W - cw) / 2, cy = H * 0.28;
       ctx.fillStyle = 'rgba(14,12,34,.82)'; roundRect(cx, cy, cw, ch, 22); ctx.fill();
-      text(L.flame <= 0 ? 'Your flame went out' : (S.cause === 'water' ? 'Splash!' : 'Snagged!'), W / 2, cy + 44, 24, '#ffd9a8', 'center', 800);
-      text(String(S.score), W / 2, cy + 104, 52, '#fff4dd', 'center', 800);
-      text(S.newBest ? 'New best!' : 'Best ' + S.best, W / 2, cy + 136, 16, S.newBest ? '#f8f39a' : '#cbb8ec', 'center', 600);
-      text(S.flies + ' fireflies', W / 2, cy + 160, 14, '#a99ccc', 'center', 500);
-      if (S.t > 0.6) text('Tap to fly again', W / 2, cy + ch - 18, 17, '#fff');
+      text(S.cause === 'dark' ? 'Your flame went out' : (S.cause === 'water' ? 'Splash!' : 'Snagged!'), W / 2, cy + 46, 26, '#ffd9a8', 'center', 800);
+      text('Level ' + S.level, W / 2, cy + 82, 17, '#cbb8ec', 'center', 600);
+      const k = Math.min(1, S.dist / course.finish);
+      text(Math.round(k * 100) + '% of the way there', W / 2, cy + 108, 14, '#a99ccc', 'center', 500);
+      if (S.t > 0.5) { ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 4); text('Tap to try again', W / 2, cy + 152, 20, '#fff'); ctx.globalAlpha = 1; }
+      button('Levels', W / 2 - 60, cy + ch - 56, 120, 38, openSelect);
     }
+    if (S.mode === 'clear') {
+      const cw = Math.min(300, W - 48), ch = 260, cx = (W - cw) / 2, cy = H * 0.26;
+      ctx.fillStyle = 'rgba(14,12,34,.82)'; roundRect(cx, cy, cw, ch, 22); ctx.fill();
+      const last = S.level === TOTAL;
+      text(last ? 'You crossed the lake!' : 'Level ' + S.level + ' cleared', W / 2, cy + 46, 25, '#ffd9a8', 'center', 800);
+      for (let k = 0; k < 3; k++) {
+        const pop = Math.min(1, Math.max(0, (S.t - 0.15 - k * 0.18) / 0.2));
+        star(W / 2 + (k - 1) * 46, cy + 96, 18 * (pop < 1 ? 0.4 + pop * 0.8 : 1), k < S.gotStars && pop > 0);
+      }
+      text(S.flies + ' of ' + course.total + ' fireflies' + (S.newStars && S.t > 0.7 ? '  ·  new best!' : ''), W / 2, cy + 140, 14, '#cbb8ec', 'center', 500);
+      if (S.t > 0.6) { ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 4); text(last ? 'Tap to fly it again' : 'Tap for level ' + (S.level + 1), W / 2, cy + 184, 20, '#fff'); ctx.globalAlpha = 1; }
+      button('Levels', W / 2 - 60, cy + ch - 56, 120, 38, openSelect);
+    }
+    if (S.mode === 'select') drawSelect();
+  }
+
+  // ---------- level select ----------
+  const PER = 25;
+  function openSelect() { S.mode = 'select'; S.page = Math.floor((unlocked() - 1) / PER); holding = false; }
+  function drawSelect() {
+    ctx.fillStyle = 'rgba(10,10,28,.88)'; ctx.fillRect(0, 0, W, H);
+    text('Choose a level', W / 2, 92, 26, '#fff4dd', 'center', 800);
+    text(cleared + ' of ' + TOTAL + ' cleared  ·  ' + totalStars() + ' of ' + TOTAL * 3 + ' stars', W / 2, 118, 14, '#cbb8ec', 'center', 500);
+    const cols = 5, gap = 10, size = Math.min(62, (W - 32 - gap * (cols - 1)) / cols);
+    const gw = cols * size + (cols - 1) * gap, x0 = (W - gw) / 2, y0 = 140;
+    for (let k = 0; k < PER; k++) {
+      const n = S.page * PER + k + 1, x = x0 + (k % cols) * (size + gap), y = y0 + Math.floor(k / cols) * (size + gap);
+      const open = n <= unlocked(), done = n <= cleared;
+      ctx.fillStyle = n === S.level && open ? '#f2a65a' : (open ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.04)');
+      roundRect(x, y, size, size, 14); ctx.fill();
+      text(open ? String(n) : '·', x + size / 2, y + size / 2 + (done ? 2 : 7), 20, n === S.level && open ? '#2a1a12' : (open ? '#fff4dd' : '#5d5680'), 'center', 800);
+      if (done) for (let s = 0; s < 3; s++) star(x + size / 2 + (s - 1) * 12, y + size - 11, 5, s < (stars[n - 1] | 0));
+      if (open) buttons.push({ x, y, w: size, h: size, go: () => { startLevel(n); } });
+    }
+    const by = y0 + 5 * (size + gap) + 10;
+    text('Levels ' + (S.page * PER + 1) + '–' + (S.page * PER + PER), W / 2, by + 26, 15, '#cbb8ec', 'center', 600);
+    if (S.page > 0) button('‹', x0, by, 56, 40, () => { S.page--; });
+    if (S.page < TOTAL / PER - 1) button('›', x0 + gw - 56, by, 56, 40, () => { S.page++; });
+    button('Close', W / 2 - 60, by + 56, 120, 40, () => { S.mode = 'title'; S.t = 0; });
   }
 
   // ---------- loop ----------
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.033, (now - last) / 1000); last = now;
-    update(dt); draw();
+    if (S.mode !== 'paused') update(dt);
+    draw();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
-  // test hook used by scripts/playtest.mjs
-  window.__game = { state: () => ({ mode: S.mode, score: S.score }), demo: (on) => { autopilot = !!on; } };
+  // test hook used by scripts/playtest.mjs and scripts/shoot.mjs ('clear' reports as 'over': a tap moves on)
+  window.__game = {
+    state: () => ({ mode: S.mode === 'clear' ? 'over' : (S.mode === 'select' ? 'title' : S.mode), score: S.flies, level: S.level, cleared, won: S.mode === 'clear' }),
+    demo: (on) => { autopilot = !!on; },
+    level: (n) => startLevel(n),
+    dbg: () => ({ cause: S.cause, pct: Math.round(100 * S.dist / course.finish), flame: +L.flame.toFixed(2), flies: S.flies + '/' + course.total }),
+    sim: (sec) => { for (let k = 0; k < sec * 60 && S.mode === 'play'; k++) update(1 / 60); return S.mode; }
+  };
 })();
 </script>
 </body>

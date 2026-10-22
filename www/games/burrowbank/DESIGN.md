@@ -1,6 +1,6 @@
 # Burrowbank
 
-**Tagline:** Tap a bird with open sky. Birds in a line fly together.
+**Tagline:** Tap a bird with open sky. Birds in a line fly together. Empty the bank.
 
 ## Trend and evidence
 
@@ -18,82 +18,55 @@
 
 ## The twist (what makes it its own game)
 
-Arrow puzzles in the charts are usually static, square-grid, level-by-level clean-ups. Burrowbank
-changes three things:
+Arrow puzzles in the charts are usually square-grid clean-ups. Burrowbank changes three things:
 
 1. **Hex burrows, six directions.** The board is a sandy riverbank full of hexagonal nest
    burrows. Each bird faces one of six hex directions (up, down and four diagonals), so you
    read lines on a hex lattice, not rows and columns.
-2. **The bank keeps filling.** It is endless and real-time. New birds keep swooping in to land
-   in empty burrows. You lose when a bird arrives and every burrow is taken.
-3. **Flocks.** When a bird flies out, any bird directly behind it (the next burrow on the
+2. **Flocks.** When a bird flies out, any bird directly behind it (the next burrow on the
    opposite side) that faces the same way follows it out at once, and so on down the line.
-   Lining birds up and then releasing the front one is the big scoring play. The skill is
-   reading which front bird releases the longest line, not just clearing whatever is free.
+3. **The bank keeps filling.** From level 30, a few new swallows swoop in while you work, so
+   the level is not done until the late arrivals are gone too.
 
-Late game adds **pebbles**: fallen stones that block lines for a while, then crumble.
+## Structure: 100 short levels
+
+- Each level is a fixed bank of birds (seeded, the same every time). Send every bird off to
+  clear it. Pebbles are stones that never move and only block paths.
+- **Feathers:** 3 per level. Tapping a boxed-in bird bonks (wobble, star, the blocker flashes
+  coral) and costs a feather. Lose all 3 and the level restarts.
+- **Stars:** one per feather left (3 for no bonks). Cleared levels and stars are saved on device.
+  Clearing a level unlocks the next; the level picker (25 per page) replays anything unlocked.
+- **Always solvable:** levels are built backwards. Every bird (and every mid-level arrival) is
+  placed with a clear path at the moment it is placed, so removing them in reverse order always
+  works. Sending a bird off only ever opens paths, so a level can never become stuck.
+- First-level tips: levels 1-3 show a one-line hint ("Tap a bird with a clear path out",
+  "Birds in a line fly together").
 
 ## Controls
 
 - Tap a bird. That is the whole game. Works the same with a mouse click.
-- **Clear line:** the bird (and its flock) flies out along its line, off the edge of the bank.
-- **Blocked line:** the bird bonks its head (cartoon wobble, little star), the blocker along its
-  line flashes coral for 0.4 s, and one extra bird lands right away as a penalty. This stops
-  random tapping without ending the run.
-- Tap anywhere on the title or game-over card to start or retry.
+- Tap a pebble: dull click, nothing else.
+- Tap the card to start, retry or move on to the next level; the Levels button opens the picker.
 
-## Board
+## Difficulty curve (d = (level - 1) / 99)
 
-- Flat-top hexes in an offset-column layout: **6 columns x 8 rows = 48 burrows**.
-- Flat-top axial directions: N (0,-1), S (0,+1), NE (+1,-1), SE (+1,0), NW (-1,0), SW (-1,+1).
-  A bird's line is every cell from its burrow to the board edge in its direction. Birds facing
-  S fly out over the river, then curve up into the sky.
-- Size the hex radius to fit both width (16 px side gutters) and height (sky band + river), so
-  it also fits a 375 x 667 phone. Target about 37 px radius on a 390 px wide phone.
-- Run starts with **14 birds** placed so that at least 5 have a clear line.
+| Lever | Level 1 | Formula | Level 100 |
+|---|---|---|---|
+| Bank size | 4 x 5 (20) | 4x5 to L5, 5x6 to L15, 5x7 to L30, 6x7 to L50, then 6x8 | 6 x 8 (48) |
+| Birds at start | 4 | 4 + round(30d) | 34 |
+| Pebbles | 0 | 0 before L12, then min(6, 1 + floor((L - 12) / 16)) | 6 |
+| Mid-level arrivals | 0 | 0 before L30, then min(8, 1 + floor((L - 30) / 9)) | 8 |
+| Time between arrivals | | 3.4 - 1.4d s | 2.0 s |
+| Chance a placement is a whole line (flock) of 2-4 | 0 | 0 before L3, then 0.14 + 0.3d | 44% |
+| Chance a new bird sits in another bird's path | 30% | 0.3 + 0.6d | 90% |
 
-## Scoring
-
-- A flock of n birds scores **1 + 2 + ... + n** (1, 3, 6, 10, 15 ...). A single bird is 1 point,
-  a line of four is 10.
-- Show the points as a small serif number that pops where the flock leader left.
-- A flock of 4+ shakes the bank lightly (2 px, 0.15 s) and plays the long chirp run.
-- Best score saved with `GameKit.saveBest`, shown on the title and game-over cards.
-
-## Arrivals and difficulty curve (t = seconds since the run started)
-
-| Lever | Start | Formula | At 60 s | At 120 s | At 180 s | Floor/cap |
-|---|---|---|---|---|---|---|
-| Arrival interval | 2.2 s | max(0.85, 2.2 - 0.0065 t) | 1.81 s | 1.42 s | 1.03 s | 0.85 s at ~208 s |
-| Arrival has a clear line when it lands | 70% | max(0.35, 0.70 - 0.0019 t) | 59% | 47% | 36% | 35% |
-| Arrival copies the facing of the bird just ahead or behind it on a line (sets up flocks) | 30% | constant | 30% | 30% | 30% | |
-| Pebble instead of a bird | 0% | 0 until 90 s, then min(0.12, (t - 90) x 0.0013) | 0% | 4% | 12% | 12% |
-
-- **Order of rolls for each arrival:** pick a random empty burrow; roll pebble; else roll the
-  flock-copy (only if a neighbour on some line exists); else roll clear-line (choose among the
-  directions that are clear right now, or among the blocked ones if the roll fails; if none
-  exist in the chosen set, use any direction).
-- **Incoming marker:** 0.8 s before a bird lands, its target burrow shows a soft shadow with a
-  small direction tick, so the player can plan. The landing bird swoops in from the sky on an
-  arc over 0.5 s.
-- **Pebbles** last 12 s, show a crumbling crack as they age, then fall away. They cannot be
-  tapped (a tap gives a dull click, no penalty).
-- **Bank-full warning:** at 40 of 48 burrows filled, the bank edge pulses coral and a low
-  heartbeat plays every 0.8 s. At 48 filled, the next arrival ends the run.
-- Deadlocks (no bird can move) are allowed. They are the fail pressure. The bias above keeps them
-  rare early and common late.
-- Expected run: a careful new player lasts 2 to 3 minutes, a good player 4 to 6 minutes.
-
-## Fail state
-
-A bird arrives and every burrow is full. It circles once above the bank, then the run ends:
-"The bank is full" card with score, best and "Tap to try again".
+Level 1 takes a few seconds; level 100 about a minute. Small banks use bigger burrows (hex radius
+up to 52 px), so early levels are easy to tap.
 
 ## Demo autopilot (`__game.demo(on)`)
 
 Every 0.45 s, tap the free bird whose flock is longest (ties: the one closest to the top). Never
-tap a blocked bird. This plays well enough for the screenshots to show a full bank with flocks
-leaving and a rising score.
+tap a blocked bird. It clears all 100 levels without a bonk.
 
 ## Art direction: sunny riverbank, paper-cut
 
@@ -113,14 +86,14 @@ gentle top-to-bottom sand fade.
 | Birds | #24324f (slate navy) |
 | River and accent | #2a9d8f |
 | River ripples | #7fd1c4 |
-| Blocked flash, bank-full warning | #e2574c |
+| Blocked flash, stars | #e2574c |
 | Pebbles | #8c8a84 with #6b6862 crack |
 | Text | #24324f on cream cards |
 
 - **Layout:** sky band across the top (about 14% of the height) with a cream sun disc and the
-  score; the bank fills the middle with wavy strata and the hex burrows; a teal river strip runs
-  along the bottom with slow sliding ripple dashes. Best score sits on the right of the sky band.
-  The bank-fill meter is a row of 48 tiny dots along the grass lip (filled dots are navy).
+  level name; the bank fills the middle with wavy strata and the hex burrows; a teal river strip runs
+  along the bottom with slow sliding ripple dashes. Birds left (or total stars, on menus) sit on the sun.
+  The sky band shows the level name, three navy feathers, and a "left" count on the sun.
 - **Birds:** the top-down swallow silhouette from `icon.svg` (swept wings, forked tail, cream
   face patch), drawn in navy with a 3 px cream outline, rotated to the bird's hex direction. The
   silhouette is itself an arrow, so the facing reads without any arrow glyph. Idle birds bob
@@ -130,7 +103,7 @@ gentle top-to-bottom sand fade.
   leave 70 ms apart so the line reads as a line. Birds that leave the bank shrink to specks in the
   sky. A bonk is a 0.18 s +-4 px wobble with a small cream star.
 - **Type:** a heavy serif (`ui-serif, Georgia, serif`, weight 800, italic for the title) with
-  tabular numbers for the score. Lantern Drift uses a rounded sans, so this is its own voice.
+  tabular numbers for counts. Lantern Drift uses a rounded sans, so this is its own voice.
   Cards are cream rounded rectangles with a 3 px navy border, like a cut paper tag.
 
 ## Sound (WebAudio via `GameKit.sound`, silent until the first tap)
@@ -139,10 +112,11 @@ gentle top-to-bottom sand fade.
 - Bonk: sine 180 Hz, 0.12 s, plus `GameKit.buzz()`.
 - Landing: sine 620 Hz, 0.04 s, quiet.
 - Pebble crumble: low square 110 Hz, 0.05 s.
-- Bank-full heartbeat: sine 90 Hz, 0.1 s, every 0.8 s while 40+ burrows are filled.
-- Game over: three falling triangle notes (660, 520, 390 Hz).
+- Level cleared: three rising triangle notes (880, 1100, 1320 Hz).
+- Out of feathers: three falling triangle notes (660, 520, 390 Hz).
 
 ## Review note
 
-Tap to start. Tap a bird whose path to the edge of the bank is clear and it flies away (birds
-behind it facing the same way follow). The game ends when every burrow is full.
+Tap to start level 1. Tap a bird whose path to the edge of the bank is clear and it flies away
+(birds behind it facing the same way follow). Clear every bird to finish the level. A blocked tap
+costs one of three feathers.
