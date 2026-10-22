@@ -93,6 +93,8 @@ for (const g of games) {
         if (/(src|href)\s*=\s*["']?\s*(https?:)?\/\//i.test(src) || /\b(fetch|XMLHttpRequest|WebSocket|sendBeacon)\s*\(/.test(src) || /url\(\s*["']?https?:/i.test(src))
           errors.push(`${p}: external network reference (games must be fully offline)`);
         if (/\b(analytics|gtag|firebase|admob|facebook)\b/i.test(src)) errors.push(`${p}: tracking/ads code is not allowed`);
+        // the App Review notes (scripts/stage-app.mjs) promise Apple there are no in-app purchases
+        if (/NativePurchases|StoreKit|purchaseProduct|restorePurchases/.test(src)) errors.push(`${p}: in-app purchase code is not allowed`);
       }
     });
     walk(dir);
