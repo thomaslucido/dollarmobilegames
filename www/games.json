@@ -19,5 +19,15 @@
     "added": "2026-10-21",
     "accent": "#f2a65a",
     "status": "built"
+  },
+  {
+    "slug": "burrowbank",
+    "name": "Burrowbank",
+    "tagline": "Tap a bird with open sky. Birds in a line fly together.",
+    "genre": "hex arrow puzzle",
+    "bundleId": "com.thomaslucido.burrowbank",
+    "added": "2026-10-21",
+    "accent": "#2a9d8f",
+    "status": "built"
   }
 ]

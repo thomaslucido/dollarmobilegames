@@ -8,5 +8,15 @@
         "slug": "lantern-drift",
         "status": "built",
         "why": "seed game; app record created as \"Lantern Drift: Firefly Lake\"; back in the pool after Tom chose to ship Bank Shot first"
+    },
+    {
+        "date": "2026-10-21",
+        "trend": "arrow / one-direction puzzles",
+        "evidence": "FoxData July 2026: arrow puzzle trend strong, several similar titles climbing (no chart snapshots yet; industry reports only)",
+        "concept": "Hex riverbank of swallows; tap a bird with a clear line to leave, lined-up birds fly as a flock; endless arrivals until the bank is full",
+        "name": "Burrowbank",
+        "slug": "burrowbank",
+        "status": "built",
+        "why": "QA passed"
     }
 ]
