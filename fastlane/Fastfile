@@ -29,26 +29,41 @@ platform :ios do
     increment_version_number(xcodeproj: project, version_number: ENV.fetch("APP_VERSION"))
     increment_build_number(xcodeproj: project, build_number: ENV.fetch("BUILD_NUMBER"))
 
+    # CI machines have no registered test devices, so Xcode can't make a development
+    # profile for a normal signed archive. Instead: archive unsigned, then let the export step
+    # sign with a cloud-managed Apple Distribution certificate via the API key.
+    root = File.expand_path("..", __dir__)
     auth = "-allowProvisioningUpdates -authenticationKeyPath #{key_path} " \
            "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} -authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
-    build_args = {
-      scheme: "App",
-      configuration: "Release",
-      export_method: "app-store",
-      output_directory: "build",
-      clean: true,
-      output_name: "App.ipa",
-      xcargs: "#{auth} DEVELOPMENT_TEAM=#{ENV.fetch('TEAM_ID')} CODE_SIGN_STYLE=Automatic",
-      export_xcargs: auth,
-      export_team_id: ENV.fetch("TEAM_ID")
-    }
-    use_ws ? build_args[:workspace] = workspace : build_args[:project] = project
-    build_app(**build_args)
+    container = use_ws ? "-workspace #{root}/#{workspace}" : "-project #{root}/#{project}"
+    archive = "#{root}/build/App.xcarchive"
+    export_dir = "#{root}/build/export"
+    sh("rm -rf '#{archive}' '#{export_dir}'")
+    sh("xcodebuild archive #{container} -scheme App -configuration Release " \
+       "-destination 'generic/platform=iOS' -archivePath '#{archive}' " \
+       "DEVELOPMENT_TEAM=#{ENV.fetch('TEAM_ID')} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''  -quiet")
+    plist = "#{root}/build/ExportOptions.plist"
+    File.write(plist, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0"><dict>
+        <key>method</key><string>app-store-connect</string>
+        <key>teamID</key><string>#{ENV.fetch('TEAM_ID')}</string>
+        <key>signingStyle</key><string>automatic</string>
+        <key>destination</key><string>export</string>
+        <key>uploadSymbols</key><true/>
+        <key>manageAppVersionAndBuildNumber</key><false/>
+      </dict></plist>
+    PLIST
+    sh("xcodebuild -exportArchive -archivePath '#{archive}' -exportPath '#{export_dir}' " \
+       "-exportOptionsPlist '#{plist}' #{auth}")
+    ipa = Dir["#{export_dir}/*.ipa"].first
+    UI.user_error!("Export produced no .ipa") unless ipa
 
     upload_to_app_store(
       api_key: api_key,
       app_identifier: ENV.fetch("APP_IDENTIFIER"),
-      ipa: "build/App.ipa",
+      ipa: ipa,
       app_version: ENV.fetch("APP_VERSION"),
       force: true,
       skip_metadata: false,
