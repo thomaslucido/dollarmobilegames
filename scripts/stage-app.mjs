@@ -15,7 +15,7 @@ const store = JSON.parse(readFileSync(`${src}/store.json`, 'utf8'));
 rmSync('build', { recursive: true, force: true });
 mkdirSync('build/www/shared', { recursive: true });
 for (const f of readdirSync(src)) {
-  if (['app', 'store', 'DESIGN.md', 'store.json'].includes(f)) continue;
+  if (['app', 'store', 'DESIGN.md', 'store.json', 'capacitor.json'].includes(f)) continue;
   cpSync(`${src}/${f}`, `build/www/${f}`, { recursive: true });
 }
 cpSync('www/shared', 'build/www/shared', { recursive: true });
@@ -23,9 +23,11 @@ let html = readFileSync('build/www/index.html', 'utf8').replaceAll('../../shared
 html = html.replace('<head>', '<head>\n<script>window.GAMEKIT_STANDALONE = true;</script>');
 writeFileSync('build/www/index.html', html);
 
+const extra = existsSync(`${src}/capacitor.json`) ? JSON.parse(readFileSync(`${src}/capacitor.json`, 'utf8')) : {};
 writeFileSync('capacitor.config.json', JSON.stringify({
-  appId: game.bundleId, appName: store.appName, webDir: 'build/www',
   ios: { contentInset: 'never', scrollEnabled: false },
+  ...extra,
+  appId: game.bundleId, appName: store.appName, webDir: 'build/www',
 }, null, 2));
 
 mkdirSync('resources', { recursive: true });
@@ -56,7 +58,7 @@ for (const [f, v] of Object.entries(review)) writeFileSync(`fastlane/metadata/re
 const shots = 'fastlane/screenshots/en-US';
 rmSync('fastlane/screenshots', { recursive: true, force: true });
 mkdirSync(shots, { recursive: true });
-for (const n of ['01', '02', '03']) if (existsSync(`${src}/store/${n}.png`)) copyFileSync(`${src}/store/${n}.png`, `${shots}/${n}_APP_IPHONE_67.png`);
+for (const f of readdirSync(`${src}/store`).filter((f) => /^\d\d\.png$/.test(f)).sort().slice(0, 10)) copyFileSync(`${src}/store/${f}`, `${shots}/${f.replace('.png', '')}_iphone.png`);
 
-if (process.env.GITHUB_ENV) writeFileSync(process.env.GITHUB_ENV, `APP_IDENTIFIER=${game.bundleId}\nAPP_NAME=${store.appName}\n`, { flag: 'a' });
+if (process.env.GITHUB_ENV) writeFileSync(process.env.GITHUB_ENV, `APP_IDENTIFIER=${game.bundleId}\nAPP_NAME=${store.appName}\nDISPLAY_NAME=${game.name}\n`, { flag: 'a' });
 console.log(`staged ${store.appName} (${game.bundleId})`);

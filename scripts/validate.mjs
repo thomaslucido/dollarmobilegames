@@ -77,6 +77,7 @@ for (const g of games) {
     for (const t of chartTitles) { const h = t.toLowerCase().split(/[:\-–—|]/)[0].trim(); if (h.length > 3 && kw.includes(h)) errors.push(`${sp}: keyword "${h}" is another game's name`); }
   }
   for (const f of ['app/icon.png', 'app/splash.png', 'store/01.png', 'store/02.png', 'store/03.png'])
+    // (games marked "custom": true were built outside the pipeline and skip the GameKit checks below)
     if (!existsSync(join('www/games', g.slug || '', f))) errors.push(`${where}: missing ${f} (run node scripts/shoot.mjs ${g.slug})`);
 
   const dir = join('www/games', g.slug);
@@ -95,11 +96,11 @@ for (const g of games) {
       }
     });
     walk(dir);
-    if (bytes > 1.5 * 1024 * 1024) errors.push(`${where}: folder is ${(bytes / 1048576).toFixed(2)} MB (limit 1.5 MB)`);
+    if (!g.custom && bytes > 1.5 * 1024 * 1024) errors.push(`${where}: folder is ${(bytes / 1048576).toFixed(2)} MB (limit 1.5 MB)`);
     const html = existsSync(join(dir, 'index.html')) ? readFileSync(join(dir, 'index.html'), 'utf8') : '';
-    if (!html.includes('shared/game-kit.js')) errors.push(`${where}: index.html must load ../../shared/game-kit.js`);
-    if (!/GameKit\.init\(/.test(html)) errors.push(`${where}: index.html must call GameKit.init`);
-    if (!/window\.__game\s*=/.test(html)) errors.push(`${where}: index.html must expose window.__game for playtests`);
+    if (!g.custom && !html.includes('shared/game-kit.js')) errors.push(`${where}: index.html must load ../../shared/game-kit.js`);
+    if (!g.custom && !/GameKit\.init\(/.test(html)) errors.push(`${where}: index.html must call GameKit.init`);
+    if (!g.custom && !/window\.__game\s*=/.test(html)) errors.push(`${where}: index.html must expose window.__game for playtests`);
   }
 }
 
