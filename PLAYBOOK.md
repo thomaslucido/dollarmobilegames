@@ -95,6 +95,11 @@ www/games/<slug>/
 ```
 
 `appName` max 30 characters, `subtitle` max 30, `keywords` max 100 characters total.
+`scripts/stage-app.mjs` turns `reviewNote` plus the description's first paragraph into the full App
+Review notes. Those notes answer Apple's standard questions for new developer accounts (purpose,
+setup, external services, regions, third-party material, purchases), so the description's first
+paragraph must say plainly what the game is, and the no-accounts / offline / no-purchases rules
+above must stay true.
 `category` is the secondary category under Games: one of GAMES_ACTION, GAMES_ADVENTURE,
 GAMES_ARCADE, GAMES_BOARD, GAMES_CARD, GAMES_CASUAL, GAMES_FAMILY, GAMES_MUSIC, GAMES_PUZZLE,
 GAMES_RACING, GAMES_ROLE_PLAYING, GAMES_SIMULATION, GAMES_SPORTS, GAMES_STRATEGY, GAMES_TRIVIA,

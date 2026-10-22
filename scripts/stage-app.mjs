@@ -50,8 +50,30 @@ for (const [f, v] of Object.entries(files)) writeFileSync(`${md}/${f}`, v);
 writeFileSync('fastlane/metadata/copyright.txt', `${new Date().getFullYear()} Tom Lucido`);
 writeFileSync('fastlane/metadata/primary_category.txt', 'GAMES');
 // (Games subcategories are optional; fastlane's subcategory upload is rejected by the API, so we skip it.)
+// Apple asks new developer accounts to answer these questions before it will review an app
+// ("Guideline 2.1 - Information Needed"). Every game ships with the answers in the review notes.
+// They hold because of the contract in PLAYBOOK.md: no accounts, no network, no ads, no purchases.
+function reviewNotes() {
+  const about = store.description.split(/\n\s*\n/)[0].trim();
+  const fonts = existsSync(`${src}/fonts`)
+    ? 'All art and sound are generated in code. The bundled fonts are open source, licensed under the SIL Open Font License 1.1.'
+    : 'All art, sound and text rendering are generated in code; no third-party assets are used.';
+  const notes = [
+    `HOW TO PLAY: ${store.reviewNote}`,
+    '',
+    `1. Accounts, user content, paid content: ${store.appName} has no account registration or login, no user-generated content, and no paid content or In-App Purchases inside the app.`,
+    `2. Purpose and audience: a casual game for all ages (4+). ${about} It is a paid app ($0.99) with no ads.`,
+    '3. Setup: none. No login, credentials or sample files are needed. Open the app and tap to start.',
+    '4. External services: none. The game runs entirely on the device and works offline. It makes no network requests and uses no analytics, ads, authentication, payment processors or AI services. Progress is saved only on the device.',
+    '5. Regional differences: none. The app works the same in all regions.',
+    `6. Regulated industry or third-party material: not applicable. ${fonts}`,
+    '7. In-App Purchases: none.',
+  ].join('\n');
+  if (notes.length > 4000) throw new Error(`review notes are ${notes.length} characters; Apple allows 4000`);
+  return notes;
+}
 mkdirSync('fastlane/metadata/review_information', { recursive: true });
-const review = { 'notes.txt': store.reviewNote, 'first_name.txt': 'Tom', 'last_name.txt': 'Lucido',
+const review = { 'notes.txt': reviewNotes(), 'first_name.txt': 'Tom', 'last_name.txt': 'Lucido',
   'phone_number.txt': '+1 313 403 2208', 'email_address.txt': 'thomaslucido@gmail.com', 'demo_required.txt': 'false' };
 for (const [f, v] of Object.entries(review)) writeFileSync(`fastlane/metadata/review_information/${f}`, v);
 
