@@ -49,7 +49,7 @@ const files = {
 for (const [f, v] of Object.entries(files)) writeFileSync(`${md}/${f}`, v);
 writeFileSync('fastlane/metadata/copyright.txt', `${new Date().getFullYear()} Tom Lucido`);
 writeFileSync('fastlane/metadata/primary_category.txt', 'GAMES');
-writeFileSync('fastlane/metadata/primary_first_sub_category.txt', store.category);
+// (Games subcategories are optional; fastlane's subcategory upload is rejected by the API, so we skip it.)
 mkdirSync('fastlane/metadata/review_information', { recursive: true });
 const review = { 'notes.txt': store.reviewNote, 'first_name.txt': 'Tom', 'last_name.txt': 'Lucido',
   'phone_number.txt': '+1 313 403 2208', 'email_address.txt': 'thomaslucido@gmail.com', 'demo_required.txt': 'false' };
