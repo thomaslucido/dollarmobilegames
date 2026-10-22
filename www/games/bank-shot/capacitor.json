@@ -1,0 +1,5 @@
+{
+  "backgroundColor": "#070a12",
+  "ios": { "contentInset": "never", "allowsLinkPreview": false, "scrollEnabled": false },
+  "plugins": { "StatusBar": { "overlaysWebView": true, "style": "DARK" } }
+}
