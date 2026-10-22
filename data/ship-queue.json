@@ -1,5 +1,10 @@
 {
   "queue": [
-    { "slug": "lantern-drift", "pickedOn": "2026-10-21", "why": "Seed game, ready now, so the first release can go out this Sunday while Tom does the one-time Apple setup.", "status": "queued" }
+    {
+      "slug": "bank-shot",
+      "pickedOn": "2026-10-21",
+      "why": "Tom's own game, shipping first by his call.",
+      "status": "queued"
+    }
   ]
 }
