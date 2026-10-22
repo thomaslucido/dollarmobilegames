@@ -1,4 +1,14 @@
 {
-    "released": [],
-    "history": []
+  "released": [
+    "bank-shot"
+  ],
+  "history": [
+    {
+      "slug": "bank-shot",
+      "bundleId": "com.thomaslucido.bankshot",
+      "version": "1.0",
+      "build": "41",
+      "date": "2026-10-21"
+    }
+  ]
 }
