@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Wheelthrown</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#4b5a44;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block}
+  #safe{position:fixed;left:0;top:0;width:0;height:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="safe"></div>
+<script src="../../shared/game-kit.js"></script>
+<script>
+(function () {
+  'use strict';
+  const kit = GameKit.init({ slug: 'wheelthrown', backColor: '#f2ebdd' });
+  const cv = document.getElementById('c');
+  const safeEl = document.getElementById('safe');
+
+  // ---------- constants ----------
+  const COLS = 5, ROWS = 6, GAP = 10;
+  const FONT = '"Avenir Next Condensed","DIN Condensed","Arial Narrow",sans-serif';
+  const C = {
+    wall: '#4b5a44', board: '#7f9277', well: '#71836a', wellSh: '#5f7058',
+    wet: '#b8532e', wetHi: '#e98a5f', wetSh: '#7e3219', leather: '#c98a63', dry: '#e9dccb', crack: '#a48b74',
+    slip: '#d77b54', shelf: '#5c3a28', shelfTop: '#7a5038', dark: '#2f3a2b', bone: '#f2ebdd', accent: '#b8532e'
+  };
+  const PTS = [0, 0, 20, 40, 80, 160, 320, 640];
+  const SHARE = [0, 0.48, 0.56, 0.62, 0.70, 0.76, 0.84, 0.92];
+  const NAMES = ['', 'LUMP', 'PINCH POT', 'CUP', 'BOWL', 'JUG', 'VASE', 'AMPHORA'];
+  // half profiles: [half-width as share of size, height from lip (0) to foot (1)]
+  const PROF = {
+    2: [[0.30, 0.30], [0.40, 0.35], [0.48, 0.55], [0.45, 0.78], [0.32, 0.95], [0.22, 1.0], [0.20, 1.0]],
+    3: [[0.34, 0.10], [0.335, 0.30], [0.32, 0.62], [0.31, 0.86], [0.31, 0.93], [0.33, 0.97], [0.32, 1.0], [0.30, 1.0]],
+    4: [[0.50, 0.36], [0.49, 0.50], [0.40, 0.70], [0.24, 0.82], [0.19, 0.86], [0.22, 0.92], [0.22, 1.0], [0.20, 1.0]],
+    5: [[0.20, 0.06], [0.16, 0.14], [0.19, 0.27], [0.38, 0.45], [0.44, 0.64], [0.38, 0.86], [0.27, 0.99], [0.24, 1.0]],
+    6: [[0.25, 0.0], [0.15, 0.07], [0.10, 0.20], [0.14, 0.38], [0.33, 0.60], [0.32, 0.80], [0.21, 0.95], [0.20, 1.0], [0.18, 1.0]],
+    7: [[0.18, 0.0], [0.12, 0.05], [0.11, 0.18], [0.27, 0.31], [0.36, 0.47], [0.31, 0.69], [0.16, 0.88], [0.07, 0.97], [0.05, 1.0]]
+  };
+  const MOUTH = { 2: [0.30, 0.30], 3: [0.34, 0.10], 4: [0.50, 0.36], 5: [0.20, 0.06], 6: [0.25, 0.0], 7: [0.18, 0.0] };
+  const GLAZES = [
+    { n: 'ASH', c: '#efe9dc', need: 0 }, { n: 'CELADON', c: '#9fcbb0', need: 0 }, { n: 'OCHRE', c: '#dca543', need: 5 },
+    { n: 'OXBLOOD', c: '#8e2b33', need: 15 }, { n: 'TENMOKU', c: '#3b2a22', need: 30 }, { n: 'SPECKLED BLUE', c: '#4a6a9a', need: 50, speck: true }
+  ];
+  const DIRS = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+
+  // ---------- colour helpers ----------
+  const rgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const mixRGB = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+  const css = (c, a) => a === undefined ? 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')' : 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + a + ')';
+  const R = {}; for (const k in C) R[k] = rgb(C[k]);
+  const WSTOPS = [[0, rgb('#e9dccb')], [0.25, rgb('#c98a63')], [0.5, rgb('#bf6338')], [1, rgb('#b8532e')]];
+  function clayRGB(w) {
+    for (let i = 1; i < WSTOPS.length; i++) if (w <= WSTOPS[i][0]) { const a = WSTOPS[i - 1], b = WSTOPS[i]; return mixRGB(a[1], b[1], (w - a[0]) / (b[0] - a[0])); }
+    return WSTOPS[3][1];
+  }
+  for (const g of GLAZES) { g.rgb = rgb(g.c); g.sh = mixRGB(g.rgb, [20, 14, 10], 0.55); }
+  const clamp = (v, a = 0, b = 1) => v < a ? a : (v > b ? b : v);
+  const lerp = (a, b, k) => a + (b - a) * k;
+  const easeOut = (k) => 1 - (1 - k) * (1 - k) * (1 - k);
+  const easeIn = (k) => k * k;
+  const easeInOut = (k) => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+  const easeBack = (k) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); };
+
+  // ---------- persistent progress ----------
+  function readLifetime() { try { return Math.max(0, parseInt(localStorage.getItem('wheelthrown.fired') || '0', 10) || 0); } catch (e) { return 0; } }
+  function saveLifetime() { try { localStorage.setItem('wheelthrown.fired', String(lifetime)); } catch (e) {} }
+  let lifetime = readLifetime();
+  const unlockedAt = (n) => GLAZES.filter((g) => g.need <= n);
+  const glazeAt = (n) => { const u = unlockedAt(n); return u[n % u.length]; };
+
+  // ---------- state ----------
+  let W = 0, H = 0, DPR = 1, safeTop = 0, safeBot = 0;
+  const L = {};
+  let bgWall = null, bgBoard = null;
+  const S = {
+    mode: 'title', t: 0, clock: 0, play: 0, score: 0, best: kit.best(), fired: 0, shake: 0, chain: 0, lastMerge: -9, merges: 0,
+    spawnT: 0, spawnN: 0, pending: null, nextTier: 1, wheelPop: 1, wheelA: 0, warn: false, tickT: 0, newBest: false,
+    bump: 0, banner: null, bannerT: 0, rescues: 0, overK: 0
+  };
+  let grid = [], parts = [], drops = [], spots = [], floats = [], flyers = [], shelf = [];
+  let held = null, pend = null, lifted = null, ptrId = null;
+  let autopilot = false, demoT = 0, pid = 0;
+  for (let r = 0; r < ROWS; r++) grid.push(new Array(COLS).fill(null));
+
+  // ---------- layout ----------
+  function layout() {
+    const cs = getComputedStyle(safeEl);
+    safeTop = parseFloat(cs.paddingTop) || 0; safeBot = parseFloat(cs.paddingBottom) || 0;
+    const back = !!document.getElementById('gk-back');
+    L.topH = Math.round(Math.max(H * 0.17, safeTop + 100));
+    L.botH = Math.round(Math.max(H * 0.12, 92) + safeBot);
+    L.stripY = H - L.botH;
+    L.stampR = 28;
+    L.stampX = (back ? 60 : 14) + L.stampR;
+    L.stampY = safeTop + 12 + L.stampR;
+    L.plankY = L.topH - 16;
+    L.shelfX0 = L.stampX + L.stampR + 36; L.shelfX1 = W - 12;
+    L.slotW = (L.shelfX1 - L.shelfX0) / 8;
+    L.potS = Math.max(20, Math.min(46, L.slotW * 1.3, L.plankY - safeTop - 8));
+    const aTop = L.topH + 8, aBot = L.stripY - 6, pad = 12;
+    const cell = Math.floor(Math.min((W - 16 - 2 * pad - (COLS - 1) * GAP) / COLS, (aBot - aTop - 2 * pad - (ROWS - 1) * GAP) / ROWS, 86));
+    L.cell = cell;
+    L.gw = COLS * cell + (COLS - 1) * GAP; L.gh = ROWS * cell + (ROWS - 1) * GAP;
+    L.bx = Math.round((W - L.gw) / 2); L.by = Math.round(aTop + (aBot - aTop - L.gh - 2 * pad) * 0.42 + pad);
+    L.px = L.bx - pad; L.py = L.by - pad; L.pw = L.gw + 2 * pad; L.ph = L.gh + 2 * pad;
+    L.wR = Math.min(64, W * 0.17);
+    L.wy = L.stripY + (L.botH - safeBot) * 0.62;
+    L.wx = W / 2;
+    renderBg();
+  }
+  const cx = (c) => L.bx + c * (L.cell + GAP) + L.cell / 2;
+  const cy = (r) => L.by + r * (L.cell + GAP) + L.cell / 2;
+  function cellAt(x, y) {
+    if (x < L.px || x > L.px + L.pw || y < L.py || y > L.py + L.ph) return null;
+    const c = Math.floor((x - L.bx + GAP / 2) / (L.cell + GAP)), r = Math.floor((y - L.by + GAP / 2) / (L.cell + GAP));
+    return { r: clamp(r, 0, ROWS - 1), c: clamp(c, 0, COLS - 1) };
+  }
+
+  function rr(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+  function layer() {
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(W * DPR)); c.height = Math.max(1, Math.round(H * DPR));
+    const g = c.getContext('2d'); g.setTransform(DPR, 0, 0, DPR, 0, 0); return [c, g];
+  }
+  function renderBg() {
+    let g;
+    [bgWall, g] = layer();
+    g.fillStyle = C.wall; g.fillRect(0, 0, W, H);
+    // linen hatch
+    g.strokeStyle = 'rgba(233,226,208,0.06)'; g.lineWidth = 1;
+    g.beginPath(); for (let k = -H; k < W; k += 7) { g.moveTo(k, 0); g.lineTo(k + H, H); } g.stroke();
+    g.beginPath(); for (let k = 0; k < W + H; k += 7) { g.moveTo(k, 0); g.lineTo(k - H, H); } g.stroke();
+    // soft light from the window, top left
+    const vg = g.createRadialGradient(W * 0.25, H * 0.2, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.8);
+    vg.addColorStop(0, 'rgba(242,235,221,0.06)'); vg.addColorStop(1, 'rgba(20,28,18,0.22)');
+    g.fillStyle = vg; g.fillRect(0, 0, W, H);
+    // walnut shelf
+    const sx = L.shelfX0 - 16;
+    g.fillStyle = 'rgba(20,24,16,0.25)'; g.fillRect(sx, L.plankY + 12, W - sx, 6);
+    g.fillStyle = C.shelf; g.fillRect(sx, L.plankY, W - sx, 12);
+    g.fillStyle = C.shelfTop; g.fillRect(sx, L.plankY, W - sx, 3);
+    g.fillStyle = 'rgba(0,0,0,0.12)'; for (let k = 0; k < 5; k++) g.fillRect(sx + 10 + k * 47 % (W - sx), L.plankY + 6 + (k % 2) * 2, 22, 1);
+    g.fillStyle = '#4a2e20';
+    for (const bx of [sx + 26, W - 34]) { g.beginPath(); g.moveTo(bx, L.plankY + 12); g.lineTo(bx + 10, L.plankY + 12); g.lineTo(bx + 10, L.plankY + 24); g.closePath(); g.fill(); }
+    // bottom bench
+    g.fillStyle = 'rgba(32,40,29,0.5)'; g.fillRect(0, L.stripY, W, H - L.stripY);
+    g.fillStyle = 'rgba(242,235,221,0.07)'; g.fillRect(0, L.stripY, W, 1.5);
+    let g2;
+    [bgBoard, g2] = layer();
+    g2.fillStyle = 'rgba(20,26,18,0.25)'; rr(g2, L.px, L.py + 5, L.pw, L.ph, 18); g2.fill();
+    g2.fillStyle = C.board; rr(g2, L.px, L.py, L.pw, L.ph, 18); g2.fill();
+    g2.fillStyle = 'rgba(242,235,221,0.06)'; rr(g2, L.px, L.py, L.pw, 3, 2); g2.fill();
+    const wr = Math.max(6, L.cell * 0.18);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const x = L.bx + c * (L.cell + GAP), y = L.by + r * (L.cell + GAP);
+      g2.fillStyle = C.wellSh; rr(g2, x, y, L.cell, L.cell, wr); g2.fill();
+      g2.fillStyle = C.well; rr(g2, x + 1, y + 3.5, L.cell - 2, L.cell - 4.5, wr - 1); g2.fill();
+    }
+  }
+
+  let ctx = kit.fitCanvas(cv, (s) => { W = s.w; H = s.h; DPR = s.dpr; layout(); });
+
+  // ---------- text with stamp-like tracking ----------
+  const mcache = new Map();
+  function cw(ch, size) { const k = size + '|' + ch; let v = mcache.get(k); if (v === undefined) { v = ctx.measureText(ch).width; mcache.set(k, v); } return v; }
+  function text(str, x, y, size, col, align, maxW, track) {
+    str = String(str); track = track === undefined ? 0.12 : track;
+    size = Math.round(size * 2) / 2;
+    ctx.font = '700 ' + size + 'px ' + FONT;
+    let dw = cw('0', size), sp = size * track, total = 0;
+    for (const ch of str) total += (ch >= '0' && ch <= '9') ? dw : cw(ch, size);
+    total += sp * Math.max(0, str.length - 1);
+    if (maxW && total > maxW) { const k = maxW / total; return text(str, x, y, Math.max(6, Math.floor(size * k * 2) / 2), col, align, 0, track); }
+    let px = align === 'left' ? x : (align === 'right' ? x - total : x - total / 2);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = col;
+    for (const ch of str) {
+      if (ch >= '0' && ch <= '9') { ctx.fillText(ch, px + (dw - cw(ch, size)) / 2, y); px += dw + sp; }
+      else { ctx.fillText(ch, px, y); px += cw(ch, size) + sp; }
+    }
+    return total;
+  }
+
+  // ---------- sound ----------
+  let mute = false;
+  const buzz = (st) => { if (!mute) kit.buzz(st); };
+  const snd = (f, d, type, vol, delay) => { if (mute) return; if (delay) setTimeout(() => GameKit.sound(f, d, type, vol), delay); else GameKit.sound(f, d, type, vol); };
+  const sPlop = () => { snd(260, 0.035, 'sine', 0.05); snd(195, 0.03, 'sine', 0.045, 25); snd(140, 0.04, 'sine', 0.04, 50); };
+  const sMerge = (tier) => { snd(180, 0.05, 'sine', 0.08); snd(300 * Math.pow(1.12, tier), 0.12, 'triangle', 0.05, 45); };
+  const sSplash = () => { snd(900, 0.02, 'sine', 0.025, 200); snd(1000, 0.02, 'sine', 0.025, 225); snd(1150, 0.02, 'sine', 0.025, 250); };
+  const sRescue = () => snd(660, 0.06, 'triangle', 0.05, 230);
+  const sFire = () => { snd(2100, 0.25, 'sine', 0.05, 200); snd(1400, 0.25, 'sine', 0.04, 200); };
+  const sTock = () => snd(120, 0.03, 'square', 0.02);
+  const sTick = () => snd(440, 0.02, 'sine', 0.03);
+  const sLift = () => snd(230, 0.04, 'triangle', 0.03);
+
+  // ---------- pieces ----------
+  function mkCracks() {
+    const out = [];
+    for (let k = 0; k < 4; k++) {
+      let x = (Math.random() - 0.5) * 0.5, y = -0.15 - Math.random() * 0.6; const pts = [[x, y]];
+      let a = Math.random() * 6.28;
+      for (let i = 0; i < 4; i++) { a += (Math.random() - 0.5) * 1.6; x += Math.cos(a) * 0.1; y += Math.sin(a) * 0.1; pts.push([x, y]); }
+      out.push(pts);
+    }
+    return out;
+  }
+  function mkPiece(tier) {
+    return { id: ++pid, tier, prevTier: tier, wet: 1, dry: false, ox: 0, oy: 0, vx: 0, vy: 0, landT: 9, mergeT: 9, srcX: 0, srcY: 0,
+      rescueT: 0, shakeT: 0, liftK: 0, ph: Math.random() * 6.28, cracks: mkCracks() };
+  }
+  function each(f) { for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (grid[r][c]) f(grid[r][c], r, c); }
+  function empties() { const e = []; for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (!grid[r][c]) e.push({ r, c }); return e; }
+  const pickRand = (a) => a[(Math.random() * a.length) | 0];
+
+  // ---------- difficulty ----------
+  const dParam = () => Math.min(1, S.play / 240);
+  function interval() { const t = S.play; return t <= 240 ? 2.4 - 1.4 * t / 240 : Math.max(0.8, 1.0 - 0.05 * Math.floor((t - 240) / 20)); }
+  function dryTime() { const t = S.play; return t <= 240 ? 16 - 7 * t / 240 : Math.max(7.5, 9 - 0.25 * Math.floor((t - 240) / 20)); }
+  const rollTier = () => Math.random() < 0.08 + 0.22 * dParam() ? 2 : 1;
+  function isDouble(n) { const t = S.play; const k = t >= 300 ? 3 : (t >= 150 ? 4 : (t >= 90 ? 6 : 0)); return k > 0 && n % k === 0; }
+
+  // ---------- run lifecycle ----------
+  function startRun() {
+    for (let r = 0; r < ROWS; r++) grid[r].fill(null);
+    parts = []; drops = []; spots = []; floats = []; flyers = []; shelf = [];
+    held = pend = lifted = null;
+    Object.assign(S, { mode: 'play', t: 0, play: 0, score: 0, fired: 0, chain: 0, lastMerge: -9, merges: 0, spawnT: 0, spawnN: 0,
+      pending: null, warn: false, tickT: 0, newBest: false, bump: 0, banner: null, bannerT: 0, rescues: 0, overK: 0, shake: 0, wheelPop: 0 });
+    S.best = kit.best();
+    S.nextTier = rollTier();
+    const e = empties().sort(() => Math.random() - 0.5);
+    for (let k = 0; k < 4; k++) { const p = mkPiece(1); p.landT = -0.15 - k * 0.12; grid[e[k].r][e[k].c] = p; }
+    buzz();
+  }
+  function gameOver() {
+    S.mode = 'over'; S.t = 0; S.shake = 8;
+    S.newBest = kit.saveBest(S.score); S.best = kit.best();
+    held = pend = lifted = null; S.pending = null;
+    buzz('heavy'); snd(330, 0.15, 'sine', 0.07); snd(220, 0.15, 'sine', 0.07, 160);
+  }
+  function addScore(n) { S.score += n; S.bump = 1; }
+
+  // ---------- spawning ----------
+  function schedule() {
+    S.spawnN++;
+    const n = isDouble(S.spawnN) ? 2 : 1;
+    const tiers = [S.nextTier]; for (let k = 1; k < n; k++) tiers.push(rollTier());
+    S.nextTier = rollTier(); S.wheelPop = 0;
+    const e = empties().sort(() => Math.random() - 0.5);
+    S.pending = { items: tiers.map((t, i) => ({ tier: t, r: e[i] ? e[i].r : -1, c: e[i] ? e[i].c : -1 })) };
+  }
+  function land() {
+    const P = S.pending; S.pending = null;
+    for (const it of P.items) {
+      let cell = (it.r >= 0 && !grid[it.r][it.c]) ? it : null;
+      if (!cell) { const e = empties(); if (!e.length) { gameOver(); return; } cell = pickRand(e); }
+      const p = mkPiece(it.tier); p.landT = 0; grid[cell.r][cell.c] = p;
+      for (let k = 0; k < 4; k++) parts.push({ x: cx(cell.c) + (Math.random() - 0.5) * L.cell * 0.5, y: cy(cell.r) + L.cell * 0.2, vx: (Math.random() - 0.5) * 40, vy: -20 - Math.random() * 20, life: 0.35, max: 0.35, col: C.wellSh, r: 1.6, g: 120 });
+    }
+    sPlop();
+  }
+  function spawnUpdate(dt) {
+    const iv = interval();
+    S.spawnT += dt;
+    if (!S.pending && S.spawnT >= iv - 0.6) schedule();
+    if (S.spawnT >= iv) { S.spawnT = Math.min(S.spawnT - iv, iv * 0.5); if (!S.pending) schedule(); land(); }
+  }
+
+  // ---------- actions ----------
+  function tock(p) { p.shakeT = 0.25; sTock(); }
+  function move(p, from, to) {
+    grid[from.r][from.c] = null; grid[to.r][to.c] = p;
+    p.ox += cx(from.c) - cx(to.c); p.oy += cy(from.r) - cy(to.r);
+    snd(200, 0.04, 'sine', 0.03);
+  }
+  function doMerge(p, from, to, sx, sy) {
+    const q = grid[to.r][to.c];
+    grid[from.r][from.c] = null;
+    if (lifted && (lifted.p === p || lifted.p === q)) lifted = null;
+    const nt = q.tier + 1;
+    S.chain = (S.merges > 0 && S.play - S.lastMerge < 1.2) ? Math.min(4, S.chain + 1) : 0;
+    S.lastMerge = S.play; S.merges++;
+    const mult = 1 + 0.5 * S.chain;
+    const gain = Math.round((PTS[nt] + (nt === 7 ? 250 : 0)) * mult);
+    addScore(gain);
+    const X = cx(to.c), Y = cy(to.r);
+    if (nt === 7) { grid[to.r][to.c] = null; fire(X, Y, sx, sy); }
+    else {
+      q.prevTier = q.tier; q.tier = nt; q.wet = 1; q.dry = false; q.mergeT = 0; q.srcX = sx; q.srcY = sy;
+      q.ox = q.oy = q.vx = q.vy = 0; q.rescueT = 0; q.cracks = mkCracks(); q.landT = 9;
+    }
+    floats.push({ x: X, y: Y - L.cell * 0.32, txt: '+' + gain, t: 0, size: 13 + nt * 1.5, col: C.bone });
+    splash(to.r, to.c);
+    sMerge(nt); buzz();
+  }
+  function splash(r, c) {
+    const X = cx(c), Y = cy(r);
+    let rescued = 0;
+    for (const [dr, dc] of DIRS) {
+      const r2 = r + dr, c2 = c + dc;
+      if (r2 < 0 || r2 >= ROWS || c2 < 0 || c2 >= COLS) continue;
+      drops.push({ x0: X, y0: Y, x1: cx(c2) + (Math.random() - 0.5) * L.cell * 0.4, y1: cy(r2) + (Math.random() - 0.5) * L.cell * 0.3, t: 0, d: 0.24 + Math.random() * 0.06 });
+      const q = grid[r2][c2]; if (!q) continue;
+      if (q.dry) {
+        q.dry = false; q.wet = 0.6; q.rescueT = 0.5; rescued++; S.rescues++; addScore(25);
+        floats.push({ x: cx(c2), y: cy(r2) - L.cell * 0.2, txt: '+25', t: -0.2, size: 13, col: C.wetHi, stamp: true });
+      } else q.wet = 1;
+    }
+    sSplash();
+    if (rescued) { sRescue(); buzz(); }
+  }
+  function fire(X, Y, sx, sy) {
+    S.fired++;
+    const glaze = glazeAt(lifetime);
+    lifetime++; saveLifetime();
+    const nu = GLAZES.find((g) => g.need > 0 && g.need === lifetime);
+    if (nu) { S.banner = nu; S.bannerT = 2.6; }
+    flyers.push({ t: 0, x: X, y: Y, sx, sy, glaze, slot: Math.min(7, S.fired - 1) });
+    sFire(); buzz('medium'); S.shake = Math.max(S.shake, 4);
+  }
+  function canMerge(p, q) { return p && q && p !== q && !p.dry && !q.dry && p.tier === q.tier; }
+  // drop a piece that is being held (drag or tap-lift) at a cell; dx, dy = where it is drawn now
+  function release(p, from, cell, dx, dy) {
+    p.ox = dx - cx(from.c); p.oy = dy - cy(from.r); p.vx = p.vy = 0;
+    if (!cell || (cell.r === from.r && cell.c === from.c)) return;
+    const q = grid[cell.r][cell.c];
+    if (!q) { move(p, from, cell); return; }
+    if (q.dry) { tock(q); return; }
+    if (canMerge(p, q)) { doMerge(p, from, cell, dx, dy); return; }
+    snd(160, 0.04, 'triangle', 0.025);
+  }
+  function setDry(p) {
+    p.wet = 0; p.dry = true;
+    if (lifted && lifted.p === p) lifted = null;
+    const pos = posOf(p);
+    if (pos) for (let k = 0; k < 4; k++) parts.push({ x: cx(pos.c) + (Math.random() - 0.5) * L.cell * 0.4, y: cy(pos.r) + (Math.random() - 0.2) * L.cell * 0.3, vx: (Math.random() - 0.5) * 12, vy: -14 - Math.random() * 16, life: 0.9, max: 0.9, col: C.dry, r: 1.5 + Math.random(), g: 0 });
+    snd(300, 0.02, 'triangle', 0.012);
+  }
+  function posOf(p) { for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (grid[r][c] === p) return { r, c }; return null; }
+
+  // ---------- input ----------
+  function down(e) {
+    e.preventDefault();
+    if (ptrId !== null && e.pointerId !== ptrId) return;
+    const x = e.clientX, y = e.clientY;
+    if (S.mode === 'title') { startRun(); return; }
+    if (S.mode === 'over') { if (S.t > 0.5) startRun(); return; }
+    if (S.mode === 'paused') { S.mode = 'play'; return; }
+    if (autopilot) return;
+    ptrId = e.pointerId;
+    const cell = cellAt(x, y);
+    const p = cell ? grid[cell.r][cell.c] : null;
+    if (p && p.landT >= 0) {
+      if (!p.dry) { pend = { p, r: cell.r, c: cell.c, x0: x, y0: y, gx: cx(cell.c) - x, gy: cy(cell.r) - y }; return; }
+      tock(p);
+      if (lifted) { const l = lifted; lifted = null; release(l.p, l, null, cx(l.c), cy(l.r) - 6 * l.p.liftK); }
+      return;
+    }
+    if (lifted) { const l = lifted; lifted = null; release(l.p, l, cell, cx(l.c), cy(l.r) - 6 * l.p.liftK); }
+  }
+  function moveEv(e) {
+    if (e.pointerId !== ptrId) return;
+    const x = e.clientX, y = e.clientY;
+    if (pend && !held && Math.hypot(x - pend.x0, y - pend.y0) > 8 && grid[pend.r][pend.c] === pend.p && !pend.p.dry) {
+      const p = pend.p;
+      held = { p, r: pend.r, c: pend.c, gx: pend.gx, gy: pend.gy - L.cell * 0.22, hx: cx(pend.c) + p.ox, hy: cy(pend.r) + p.oy - 6 * p.liftK, fx: x, fy: y };
+      if (lifted) lifted = null;
+      pend = null; sLift();
+    }
+    if (held) { held.fx = x; held.fy = y; }
+  }
+  function upEv(e) {
+    if (e.pointerId !== ptrId) return;
+    ptrId = null;
+    if (held) {
+      const h = held; held = null;
+      if (S.mode !== 'play' || grid[h.r][h.c] !== h.p) return;
+      release(h.p, h, cellAt(h.fx + h.gx, h.fy + h.gy), h.hx, h.hy);
+      return;
+    }
+    if (pend) {
+      const P = pend; pend = null;
+      const p = P.p;
+      if (S.mode !== 'play' || grid[P.r][P.c] !== p) return;
+      if (p.dry) { tock(p); lifted = null; return; }
+      if (lifted && lifted.p === p) { lifted = null; snd(200, 0.03, 'sine', 0.025); return; }
+      if (lifted) {
+        const l = lifted;
+        if (canMerge(l.p, p)) { lifted = null; doMerge(l.p, l, P, cx(l.c), cy(l.r) - 6 * l.p.liftK); }
+        else { lifted = { p, r: P.r, c: P.c }; sLift(); }
+        return;
+      }
+      lifted = { p, r: P.r, c: P.c }; sLift();
+    }
+  }
+  cv.addEventListener('pointerdown', down);
+  window.addEventListener('pointermove', moveEv);
+  window.addEventListener('pointerup', upEv);
+  window.addEventListener('pointercancel', (e) => { if (held) { const h = held; held = null; h.p.ox = h.hx - cx(h.c); h.p.oy = h.hy - cy(h.r); } pend = null; ptrId = null; });
+  kit.onPause(() => {
+    if (S.mode === 'play') S.mode = 'paused';
+    if (held) { const h = held; held = null; h.p.ox = h.hx - cx(h.c); h.p.oy = h.hy - cy(h.r); }
+    pend = null; ptrId = null;
+  });
+
+  // ---------- demo autopilot ----------
+  function dryAround(r, c, skip) {
+    let n = 0;
+    for (const [dr, dc] of DIRS) {
+      const r2 = r + dr, c2 = c + dc;
+      if (r2 < 0 || r2 >= ROWS || c2 < 0 || c2 >= COLS) continue;
+      const q = grid[r2][c2]; if (!q || q === skip) continue;
+      if (q.dry) n += 2; else if (q.wet < 0.35) n += 1;
+    }
+    return n;
+  }
+  function demoStep() {
+    const list = [];
+    each((p, r, c) => { if (!p.dry && p.landT >= 0 && p.mergeT >= 0.09) list.push({ p, r, c }); });
+    let best = null, bs = -1;
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const a = list[i], b = list[j]; if (a.p.tier !== b.p.tier) continue;
+      const da = dryAround(a.r, a.c, b.p), db = dryAround(b.r, b.c, a.p);
+      const tgt = db >= da ? b : a, src = tgt === b ? a : b;
+      const s = a.p.tier * 2 + Math.max(da, db);
+      if (s > bs) { bs = s; best = { src, tgt }; }
+    }
+    // keep a working stock on the board (it reads better and plays like a person): only rush when space or wetness runs low
+    const free = empties().length;
+    if (best && free > 16 && Math.min(best.src.p.wet, best.tgt.p.wet) > 0.45 && best.src.p.tier < 5) best = null;
+    if (best) { doMerge(best.src.p, best.src, best.tgt, cx(best.src.c), cy(best.src.r)); return; }
+    if (free > 16) return;
+    if (list.length < 1) return;
+    let wettest = list[0]; for (const a of list) if (a.p.wet > wettest.p.wet) wettest = a;
+    let driest = null; each((p, r, c) => { if (p !== wettest.p && (!driest || p.wet < driest.p.wet)) driest = { p, r, c }; });
+    if (!driest || Math.max(Math.abs(driest.r - wettest.r), Math.abs(driest.c - wettest.c)) <= 1) return;
+    const opts = [];
+    for (const [dr, dc] of DIRS) { const r2 = driest.r + dr, c2 = driest.c + dc; if (r2 >= 0 && r2 < ROWS && c2 >= 0 && c2 < COLS && !grid[r2][c2]) opts.push({ r: r2, c: c2 }); }
+    if (opts.length) move(wettest.p, wettest, pickRand(opts));
+  }
+
+  // ---------- update ----------
+  function updatePieces(dt) {
+    const k1 = 300, k2 = 30;
+    each((p) => {
+      p.landT += dt; p.mergeT += dt;
+      p.rescueT = Math.max(0, p.rescueT - dt); p.shakeT = Math.max(0, p.shakeT - dt);
+      const up = (held && held.p === p) || (lifted && lifted.p === p) ? 1 : 0;
+      p.liftK += (up - p.liftK) * Math.min(1, dt * 18);
+      if (!(held && held.p === p)) { p.vx += (-p.ox * k1 - p.vx * k2) * dt; p.vy += (-p.oy * k1 - p.vy * k2) * dt; p.ox += p.vx * dt; p.oy += p.vy * dt; }
+    });
+    if (held) { const h = held, f = 1 - Math.exp(-dt / 0.06); h.hx += (h.fx + h.gx - h.hx) * f; h.hy += (h.fy + h.gy - h.hy) * f; }
+  }
+  function updateFx(dt) {
+    for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt; p.life -= dt; }
+    parts = parts.filter((p) => p.life > 0);
+    for (const d of drops) { d.t += dt; if (d.t >= d.d) { d.done = true; spots.push({ x: d.x1, y: d.y1, t: 0, r: L.cell * (0.07 + Math.random() * 0.04) }); } }
+    drops = drops.filter((d) => !d.done);
+    for (const s of spots) s.t += dt;
+    spots = spots.filter((s) => s.t < 0.4);
+    for (const f of floats) f.t += dt;
+    floats = floats.filter((f) => f.t < 0.9);
+    for (const f of flyers) { f.t += dt; if (f.t >= 1.0 && !f.done) { f.done = true; shelf.push({ g: f.glaze, t: 0 }); snd(1600, 0.05, 'sine', 0.03); } }
+    flyers = flyers.filter((f) => !f.done);
+    for (const s of shelf) s.t += dt;
+  }
+  function update(dt) {
+    S.clock += dt; S.t += dt;
+    S.shake = Math.max(0, S.shake - 30 * dt);
+    S.bump = Math.max(0, S.bump - dt * 5);
+    S.wheelPop = Math.min(1, S.wheelPop + dt * 3);
+    S.bannerT = Math.max(0, S.bannerT - dt);
+    S.wheelA += dt * Math.PI * 2 / (S.mode === 'play' ? interval() : 3.2);
+    updateFx(dt);
+    updatePieces(dt);
+    if (S.mode === 'over') { S.overK = Math.min(1, S.overK + dt / 0.4); return; }
+    if (S.mode !== 'play') return;
+    S.play += dt;
+    if (S.chain > 0 && S.play - S.lastMerge > 1.2) S.chain = 0;
+    const rate = dt / dryTime();
+    each((p) => {
+      if (p.dry || p.landT < 0) return;
+      p.wet -= rate;
+      if ((held && held.p === p) || (pend && pend.p === p)) p.wet = Math.max(p.wet, 0.02);
+      if (p.wet <= 0) setDry(p);
+    });
+    spawnUpdate(dt);
+    if (S.mode !== 'play') return;
+    const free = empties().length;
+    S.warn = free <= 3;
+    if (S.warn) { S.tickT += dt; if (S.tickT >= 1) { S.tickT -= 1; sTick(); } } else S.tickT = 0.99;
+    if (autopilot) { demoT -= dt; if (demoT <= 0) { demoT = 0.3; demoStep(); } }
+  }
+
+  // ---------- drawing: vessels ----------
+  function vesselPath(tier, s, ph) {
+    ctx.beginPath();
+    if (tier === 1) {
+      const n = 36;
+      for (let i = 0; i <= n; i++) {
+        const a = i / n * Math.PI * 2, r = 1 + 0.1 * Math.sin(3 * a + ph) + 0.04 * Math.sin(5 * a + ph * 2);
+        const X = Math.cos(a) * 0.5 * s * r, Y = Math.min(0, -0.38 * s + Math.sin(a) * 0.38 * s * r);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.closePath(); return;
+    }
+    const pr = PROF[tier], P = [];
+    for (const [x, y] of pr) P.push([x * s, (y - 1) * s]);
+    for (let i = pr.length - 1; i >= 0; i--) P.push([-pr[i][0] * s, (pr[i][1] - 1) * s]);
+    ctx.moveTo(P[0][0], P[0][1]);
+    for (let i = 1; i < P.length - 1; i++) { const mx = (P[i][0] + P[i + 1][0]) / 2, my = (P[i][1] + P[i + 1][1]) / 2; ctx.quadraticCurveTo(P[i][0], P[i][1], mx, my); }
+    ctx.lineTo(P[P.length - 1][0], P[P.length - 1][1]);
+    ctx.closePath();
+  }
+  function handles(tier, s, col) {
+    if (tier !== 5 && tier !== 7) return;
+    ctx.strokeStyle = col; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.6, s * 0.065);
+    ctx.beginPath();
+    if (tier === 5) { ctx.moveTo(0.17 * s, -0.84 * s); ctx.bezierCurveTo(0.52 * s, -0.88 * s, 0.58 * s, -0.56 * s, 0.38 * s, -0.47 * s); }
+    else for (const sg of [1, -1]) { ctx.moveTo(sg * 0.11 * s, -0.90 * s); ctx.bezierCurveTo(sg * 0.40 * s, -0.98 * s, sg * 0.42 * s, -0.74 * s, sg * 0.30 * s, -0.66 * s); }
+    ctx.stroke();
+  }
+  // o: body (rgb), sh (rgb), hi 0..1, cr 0..1, cracks, ph, kx, ky, glaze, specks, clip (0..1 from foot)
+  function drawVessel(tier, x, by, s, o) {
+    ctx.save();
+    ctx.translate(x, by); ctx.scale(o.kx || 1, o.ky || 1);
+    if (o.clip !== undefined) { ctx.beginPath(); ctx.rect(-s, -s * 1.1 * o.clip, s * 2, s * 1.1 * o.clip + 2); ctx.clip(); }
+    handles(tier, s, css(mixRGB(o.body, o.sh, 0.25)));
+    vesselPath(tier, s, o.ph || 0);
+    ctx.fillStyle = css(o.body); ctx.fill();
+    ctx.save(); ctx.clip();
+    const g = ctx.createLinearGradient(-s * 0.5, 0, s * 0.5, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0.10)'); g.addColorStop(0.42, 'rgba(255,255,255,0)'); g.addColorStop(1, css(o.sh, 0.62));
+    ctx.fillStyle = g; ctx.fillRect(-s, -s * 1.1, s * 2, s * 1.2);
+    const g2 = ctx.createLinearGradient(0, -s * 0.3, 0, 0);
+    g2.addColorStop(0, css(o.sh, 0)); g2.addColorStop(1, css(o.sh, 0.4));
+    ctx.fillStyle = g2; ctx.fillRect(-s, -s * 0.3, s * 2, s * 0.32);
+    if (o.hi > 0) {
+      const hx = (-0.2 + 0.07 * Math.sin(S.clock * (o.spin || 1.4) + (o.ph || 0))) * s;
+      ctx.fillStyle = css(o.glaze ? [255, 255, 255] : R.wetHi, (o.glaze ? 0.35 : 0.55) * o.hi);
+      ctx.beginPath(); ctx.ellipse(hx, -s * (tier === 1 ? 0.42 : 0.52), Math.max(0.6, s * 0.045), s * (tier === 1 ? 0.22 : 0.36), 0, 0, 7); ctx.fill();
+    }
+    if (o.specks) { ctx.fillStyle = C.dry; for (let k = 0; k < 14; k++) { const a = k * 2.399, rr2 = Math.sqrt((k + 0.5) / 14) * 0.32 * s; ctx.fillRect(Math.cos(a) * rr2, -0.5 * s + Math.sin(a) * rr2 * 1.3, Math.max(1, s * 0.03), Math.max(1, s * 0.03)); } }
+    if (o.cr > 0 && o.cracks) {
+      ctx.strokeStyle = css(R.crack, o.cr); ctx.lineWidth = Math.max(0.8, s * 0.02); ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (const cr of o.cracks) { ctx.moveTo(cr[0][0] * s, cr[0][1] * s); for (let i = 1; i < cr.length; i++) ctx.lineTo(cr[i][0] * s, cr[i][1] * s); }
+      ctx.stroke();
+    }
+    ctx.restore();
+    const m = MOUTH[tier];
+    if (m) {
+      const my = (m[1] - 1) * s, rx = m[0] * s * 0.9, ry = Math.max(1.2, m[0] * s * 0.2);
+      ctx.fillStyle = css(mixRGB(o.sh, [30, 20, 14], 0.35)); ctx.beginPath(); ctx.ellipse(0, my + 0.5, rx, ry, 0, 0, 7); ctx.fill();
+      ctx.strokeStyle = css(mixRGB(o.body, [255, 255, 255], 0.12)); ctx.lineWidth = Math.max(1, s * 0.025);
+      ctx.beginPath(); ctx.ellipse(0, my + 0.5, rx, ry, 0, 0, 7); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function clayLook(p) {
+    const k = clamp(p.rescueT / 0.3);
+    const w = p.dry ? 0 : p.wet;
+    const body = mixRGB(clayRGB(w), R.dry, k);
+    const sh = mixRGB(mixRGB(R.wetSh, R.crack, clamp(1 - w * 2.5)), R.crack, k);
+    const hi = clamp((w - 0.5) / 0.5) * (1 - k);
+    const cr = p.dry ? 1 : Math.max(clamp((0.25 - w) / 0.25), k);
+    return { body, sh, hi, cr, cracks: p.cracks, ph: p.ph };
+  }
+  const vh = (tier) => tier === 1 ? 0.76 : 1;
+  function drawShadow(x, by, s, a) { ctx.fillStyle = 'rgba(40,50,36,' + a + ')'; ctx.beginPath(); ctx.ellipse(x, by - 1, s * 0.42, Math.max(1.5, s * 0.09), 0, 0, 7); ctx.fill(); }
+  function drawDots(tier, x, by) {
+    if (tier < 2 || tier > 6) return;
+    const n = tier - 1, y = Math.min(by + 5, by + L.cell * 0.1), sp = 5;
+    ctx.fillStyle = 'rgba(242,235,221,0.5)';
+    for (let k = 0; k < n; k++) { ctx.beginPath(); ctx.arc(x + (k - (n - 1) / 2) * sp, y, 1.4, 0, 7); ctx.fill(); }
+  }
+  function drawPiece(p, x, y, sink) {
+    const o = clayLook(p);
+    let kx = 1, ky = 1, tier = p.tier;
+    if (!p.dry && p.wet < 0.25) x += Math.sin(S.clock * 47 + p.id) * 0.5;
+    if (p.shakeT > 0) x += Math.sin(p.shakeT * 90) * 2 * (p.shakeT / 0.25);
+    if (p.landT < 0.08) { kx = 1.25; ky = 0.75; }
+    else if (p.landT < 0.24) { const k = easeOut((p.landT - 0.08) / 0.16); kx = lerp(1.25, 1, k); ky = lerp(0.75, 1, k); }
+    kx *= 1 - 0.08 * p.liftK; ky *= 1 + 0.1 * p.liftK;
+    y += (sink || 0);
+    const lift = (held && held.p === p) ? 0 : 6 * p.liftK;
+    if (p.mergeT < 0.09) {
+      // squish: target and source shrink toward the centre
+      const k = p.mergeT / 0.09, sc = 1 - 0.4 * k, s0 = L.cell * SHARE[p.prevTier];
+      const gx = lerp(p.srcX, x, easeIn(k)), gy = lerp(p.srcY, y, easeIn(k));
+      drawVessel(p.prevTier, x, y + s0 * vh(p.prevTier) * 0.5 * sc, s0, Object.assign({}, o, { kx: sc, ky: sc, hi: 1 }));
+      drawVessel(p.prevTier, gx, gy + s0 * vh(p.prevTier) * 0.5 * sc, s0, Object.assign({}, o, { kx: sc, ky: sc, hi: 1 }));
+      return;
+    }
+    const s = L.cell * SHARE[tier];
+    let by = y + s * vh(tier) * 0.5;
+    if (p.mergeT < 0.34) {
+      const k = (p.mergeT - 0.09) / 0.25, sc = 0.6 + 0.4 * easeBack(clamp(k));
+      kx *= sc * (1 - 0.075 * (1 - Math.cos(4 * Math.PI * k))); ky *= sc;
+      by += (1 - easeOut(clamp(k))) * L.cell * 0.12;
+    }
+    drawDots(tier, x, y + s * vh(tier) * 0.5);
+    drawShadow(x, y + s * vh(tier) * 0.5, s * (1 + p.liftK * 0.2), 0.28 - 0.1 * p.liftK);
+    o.kx = kx; o.ky = ky;
+    drawVessel(tier, x, by - lift, s, o);
+  }
+  function drawGlazed(g, x, by, s, kx, ky) {
+    drawVessel(7, x, by, s, { body: g.rgb, sh: g.sh, hi: 1, cr: 0, ph: 0.6, spin: 0.4, kx, ky, glaze: true, specks: g.speck });
+  }
+
+  // ---------- drawing: scene ----------
+  function drawBoard() {
+    ctx.drawImage(bgBoard, 0, 0, W, H);
+    for (const s of spots) { ctx.fillStyle = css(R.wetSh, 0.5 * (1 - s.t / 0.4)); ctx.beginPath(); ctx.ellipse(s.x, s.y, s.r * 1.3, s.r, 0, 0, 7); ctx.fill(); }
+    // where the next lumps will land
+    if (S.mode === 'play' && S.pending) {
+      const tl = interval() - S.spawnT, k = clamp(1 - tl / 0.6);
+      for (const it of S.pending.items) {
+        if (it.r < 0 || grid[it.r][it.c]) continue;
+        const x = cx(it.c), y = cy(it.r);
+        ctx.strokeStyle = 'rgba(242,235,221,' + (0.12 + 0.3 * k) + ')'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(x, y, L.cell * (0.36 - 0.06 * k), 0, 7); ctx.stroke();
+      }
+    }
+    // targets for the piece in hand
+    const hp = held ? held.p : (lifted ? lifted.p : null);
+    if (hp) {
+      const pulse = 0.25 + 0.15 * Math.sin(S.clock * 6);
+      each((q, r, c) => {
+        if (!canMerge(hp, q)) return;
+        ctx.strokeStyle = 'rgba(242,235,221,' + pulse + ')'; ctx.lineWidth = 2;
+        rr(ctx, cx(c) - L.cell / 2 + 2, cy(r) - L.cell / 2 + 2, L.cell - 4, L.cell - 4, L.cell * 0.16); ctx.stroke();
+      });
+      if (held) {
+        const cell = cellAt(held.fx + held.gx, held.fy + held.gy);
+        if (cell && !(cell.r === held.r && cell.c === held.c)) {
+          const q = grid[cell.r][cell.c];
+          const ok = !q || canMerge(hp, q);
+          if (ok) { ctx.strokeStyle = q ? C.accent : 'rgba(242,235,221,0.5)'; ctx.lineWidth = q ? 3 : 2; rr(ctx, cx(cell.c) - L.cell / 2, cy(cell.r) - L.cell / 2, L.cell, L.cell, L.cell * 0.18); ctx.stroke(); }
+        }
+      }
+    }
+    const sink = S.mode === 'over' ? 2 * easeOut(S.overK) : 0;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const p = grid[r][c];
+      if (!p || p.landT < 0 || (held && held.p === p)) continue;
+      drawPiece(p, cx(c) + p.ox, cy(r) + p.oy, sink);
+    }
+    // falling lumps
+    if (S.mode === 'play' && S.pending) {
+      const tl = interval() - S.spawnT;
+      if (tl < 0.15) for (const it of S.pending.items) {
+        if (it.r < 0 || grid[it.r][it.c]) continue;
+        const k = clamp(1 - tl / 0.15), s = L.cell * SHARE[it.tier], x = cx(it.c), y = cy(it.r) - 40 * (1 - easeIn(k));
+        ctx.globalAlpha = k;
+        drawVessel(it.tier, x, y + s * vh(it.tier) * 0.5, s, { body: R.wet, sh: R.wetSh, hi: 1, cr: 0, ph: it.c + it.r, kx: 0.9, ky: 1.12 });
+        ctx.globalAlpha = 1;
+      }
+    }
+    // slip droplets in flight
+    ctx.fillStyle = C.slip;
+    for (const d of drops) {
+      const k = d.t / d.d, x = lerp(d.x0, d.x1, k), y = lerp(d.y0, d.y1, k) - Math.sin(k * Math.PI) * L.cell * 0.45;
+      ctx.beginPath(); ctx.arc(x, y, 2.6, 0, 7); ctx.fill();
+    }
+  }
+  function drawParts() {
+    for (const p of parts) { ctx.globalAlpha = clamp(p.life / p.max); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+  }
+  function drawHeld() {
+    if (!held) return;
+    const p = held.p, s = L.cell * SHARE[p.tier];
+    drawShadow(held.hx + 6, held.hy + s * vh(p.tier) * 0.5 + 14, s * 1.15, 0.22);
+    drawPiece(p, held.hx, held.hy);
+  }
+  const slotX = (i) => L.shelfX0 + (i + 0.5) * L.slotW;
+  function drawShelf(list) {
+    const n = list.length, show = Math.min(8, n);
+    for (let i = 0; i < show; i++) {
+      const it = i < 7 ? list[i] : list[n - 1];
+      let kx = 1, ky = 1, oy = 0;
+      if (it.t !== undefined && it.t < 0.2) { const k = it.t / 0.2; oy = -Math.sin(k * Math.PI) * 4; ky = 1 - 0.12 * Math.sin(k * Math.PI * 2) * (1 - k); kx = 2 - ky; }
+      drawShadow(slotX(i), L.plankY + 1, L.potS * 0.6, 0.3);
+      drawGlazed(it.g, slotX(i), L.plankY + 1 + oy, L.potS, kx, ky);
+    }
+    if (n > 8) {
+      const x = slotX(7) + L.slotW * 0.35, y = L.plankY - L.potS * 0.85;
+      ctx.fillStyle = C.dark; ctx.beginPath(); ctx.arc(x, y, 10, 0, 7); ctx.fill();
+      text('+' + (n - 8), x + 0.5, y + 3.5, 9, C.bone, 'center', 18, 0.04);
+    }
+  }
+  function drawFlyers() {
+    for (const f of flyers) {
+      const s0 = L.cell * SHARE[7], t = f.t;
+      if (t < 0.09) {
+        const k = t / 0.09, sc = 1 - 0.4 * k, s6 = L.cell * SHARE[6], o = { body: R.wet, sh: R.wetSh, hi: 1, cr: 0, kx: sc, ky: sc };
+        drawVessel(6, f.x, f.y + s6 * 0.5 * sc, s6, o);
+        drawVessel(6, lerp(f.sx, f.x, easeIn(k)), lerp(f.sy, f.y, easeIn(k)) + s6 * 0.5 * sc, s6, o);
+        continue;
+      }
+      if (t < 0.41) {
+        const k = clamp((t - 0.09) / 0.12), sc = 0.6 + 0.4 * easeBack(k), spin = 1 - 0.075 * (1 - Math.cos(4 * Math.PI * clamp((t - 0.09) / 0.25)));
+        const by = f.y + s0 * 0.5;
+        drawVessel(7, f.x, by, s0, { body: [250, 246, 238], sh: R.crack, hi: 0, cr: 0, kx: sc * spin, ky: sc });
+        if (t > 0.21) { const g = f.glaze; drawVessel(7, f.x, by, s0, { body: g.rgb, sh: g.sh, hi: 1, cr: 0, kx: spin, ky: 1, glaze: true, specks: g.speck, clip: easeOut((t - 0.21) / 0.2) }); }
+        continue;
+      }
+      const k = easeInOut(clamp((t - 0.41) / 0.59));
+      const x0 = f.x, y0 = f.y + s0 * 0.5, x1 = slotX(f.slot), y1 = L.plankY + 1;
+      const qx = (x0 + x1) / 2, qy = Math.min(y0, y1) - 90;
+      const x = (1 - k) * (1 - k) * x0 + 2 * (1 - k) * k * qx + k * k * x1, y = (1 - k) * (1 - k) * y0 + 2 * (1 - k) * k * qy + k * k * y1;
+      const s = lerp(s0, L.potS, k);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(Math.sin(k * Math.PI) * 0.35); drawGlazed(f.glaze, 0, 0, s, 1, 1); ctx.restore();
+    }
+  }
+  function stampCircle(x, y, r, fill) {
+    ctx.fillStyle = fill || 'rgba(47,58,43,0.88)'; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    ctx.strokeStyle = C.accent; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, r - 1.5, 0, 7); ctx.stroke();
+    ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r - 6, 0, 7); ctx.stroke();
+  }
+  function drawHud() {
+    const x = L.stampX, y = L.stampY, r = L.stampR, b = 1 + 0.1 * easeOut(S.bump);
+    ctx.save(); ctx.translate(x, y); ctx.scale(b, b);
+    stampCircle(0, 0, r);
+    text('SCORE', 0.5, -9, 7, 'rgba(242,235,221,0.6)', 'center');
+    text(S.score, 0.5, 9, 17, C.bone, 'center', r * 2 - 16, 0.06);
+    ctx.restore();
+    text('BEST ' + Math.max(S.best, S.score), x, y + r + 13, 10, 'rgba(242,235,221,0.75)', 'center', r * 2 + 30);
+    // quick-hands multiplier stamp
+    if (S.chain > 0) {
+      const k = clamp(1 - (S.play - S.lastMerge) / 1.2), mx = x + r + 17, my = y - r * 0.35;
+      ctx.globalAlpha = 0.35 + 0.65 * k;
+      ctx.save(); ctx.translate(mx, my); ctx.rotate(-0.18);
+      ctx.fillStyle = C.accent; ctx.beginPath(); ctx.arc(0, 0, 13, 0, 7); ctx.fill();
+      ctx.strokeStyle = C.bone; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, 10.5, 0, 7); ctx.stroke();
+      text('x' + (1 + 0.5 * S.chain), 0.5, 3.5, 10, C.bone, 'center', 20, 0.02);
+      ctx.restore(); ctx.globalAlpha = 1;
+    }
+    // floating points
+    for (const f of floats) {
+      if (f.t < 0) continue;
+      const k = f.t / 0.9;
+      ctx.globalAlpha = clamp(1.4 - k * 1.4);
+      const yy = f.y - 30 * easeOut(k);
+      if (f.stamp) { ctx.fillStyle = 'rgba(47,58,43,0.85)'; ctx.beginPath(); ctx.arc(f.x, yy - 4, 14, 0, 7); ctx.fill(); ctx.strokeStyle = C.accent; ctx.lineWidth = 1.5; ctx.stroke(); }
+      text(f.txt, f.x, yy + (f.stamp ? 0 : 0), f.stamp ? 10 : f.size, f.col, 'center', 0, 0.06);
+    }
+    ctx.globalAlpha = 1;
+    // glaze unlocked banner
+    if (S.bannerT > 0 && S.banner) {
+      const a = clamp(S.bannerT / 0.4) * clamp((2.6 - S.bannerT) / 0.25);
+      const bw = Math.min(W - 40, 260), bx = (W - bw) / 2, byy = L.py + L.ph * 0.4;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(47,58,43,0.94)'; rr(ctx, bx, byy, bw, 58, 18); ctx.fill();
+      ctx.fillStyle = S.banner.c; ctx.beginPath(); ctx.arc(bx + 32, byy + 29, 14, 0, 7); ctx.fill();
+      text('NEW GLAZE', bx + 56, byy + 25, 11, 'rgba(242,235,221,0.65)', 'left');
+      text(S.banner.n, bx + 56, byy + 44, 17, C.bone, 'left', bw - 70);
+      ctx.globalAlpha = 1;
+    }
+  }
+  function drawWheel(progress, tier) {
+    const x = L.wx, y = L.wy, Rw = L.wR, ry = Rw * 0.26;
+    const fl = (S.mode === 'play' && S.warn) ? 0.5 + 0.5 * Math.sin(S.clock * 10) : 0;
+    const floor = Math.min(H - safeBot - 4, y + Rw * 0.8);
+    // pedestal
+    ctx.fillStyle = '#26301f';
+    ctx.beginPath(); ctx.moveTo(x - Rw * 0.18, y + 8); ctx.lineTo(x + Rw * 0.18, y + 8); ctx.lineTo(x + Rw * 0.55, floor); ctx.lineTo(x - Rw * 0.55, floor); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(x, floor, Rw * 0.8, 4, 0, 0, 7); ctx.fill();
+    // head: thickness then face
+    ctx.fillStyle = '#222b1e'; ctx.beginPath(); ctx.ellipse(x, y + 7, Rw, ry, 0, 0, 7); ctx.fill(); ctx.fillRect(x - Rw, y, Rw * 2, 7);
+    ctx.fillStyle = css(mixRGB(R.dark, R.accent, fl * 0.85)); ctx.beginPath(); ctx.ellipse(x, y, Rw, ry, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(242,235,221,0.08)'; ctx.lineWidth = 1;
+    for (const k of [0.66, 0.36]) { ctx.beginPath(); ctx.ellipse(x, y, Rw * k, ry * k, 0, 0, 7); ctx.stroke(); }
+    // marks on the rim show the spin
+    for (let k = 0; k < 10; k++) {
+      const a = S.wheelA + k * Math.PI / 5, sv = Math.sin(a);
+      if (sv <= 0) continue;
+      ctx.fillStyle = 'rgba(242,235,221,' + (0.25 * sv) + ')';
+      ctx.fillRect(x + Math.cos(a) * Rw * 0.97 - 1, y + ry * sv * 0.8, 2, 6);
+    }
+    // arc toward the next plop
+    ctx.strokeStyle = fl > 0 ? css(R.accent, 0.6 + 0.4 * fl) : 'rgba(242,235,221,0.16)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.ellipse(x, y + 3, Rw + 9, ry + 9, 0, 0, Math.PI * 2); ctx.stroke();
+    if (progress > 0) {
+      ctx.strokeStyle = fl > 0 ? C.bone : 'rgba(242,235,221,0.75)';
+      ctx.beginPath(); ctx.ellipse(x, y + 3, Rw + 9, ry + 9, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress); ctx.stroke();
+    }
+    // the next lump turning on the wheel
+    if (tier) {
+      const s = Math.min(38, Rw * 0.62) * (tier === 2 ? 1.05 : 1) * easeBack(S.wheelPop);
+      if (s > 1) drawVessel(tier, x, y + 1, s, { body: R.wet, sh: R.wetSh, hi: 1, cr: 0, ph: 1.2, spin: 7, kx: 1 - 0.05 * Math.sin(S.wheelA * 2) });
+    }
+  }
+  function drawStrip() {
+    const play = S.mode === 'play' || S.mode === 'paused' || S.mode === 'over';
+    drawWheel(play && S.mode !== 'over' ? clamp(S.spawnT / interval()) : 0, S.mode === 'over' ? 0 : (play ? S.nextTier : 1));
+    if (!play) return;
+    const y = L.wy + 2;
+    text('FIRED', 20, y - 10, 9, 'rgba(242,235,221,0.55)', 'left');
+    text(S.fired, 20, y + 10, 18, C.bone, 'left');
+    const sec = Math.floor(S.play);
+    text('TIME', W - 20, y - 10, 9, 'rgba(242,235,221,0.55)', 'right');
+    text(Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'), W - 20, y + 10, 18, C.bone, 'right');
+    if (S.mode === 'play' && S.warn) {
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.clock * 10);
+      text('STUDIO FILLING UP', W / 2, L.stripY + 15, 10, C.wetHi, 'center');
+      ctx.globalAlpha = 1;
+    } else if (S.mode === 'play' && S.best === 0 && lifetime === 0 && S.merges === 0 && S.play > 0.6) {
+      ctx.globalAlpha = 0.55 + 0.35 * Math.sin(S.clock * 4);
+      text('DRAG CLAY ONTO ITS TWIN', W / 2, L.stripY + 15, 10, C.bone, 'center', W - 40);
+      ctx.globalAlpha = 1;
+    }
+  }
+  function slab(x, y, w, h) { ctx.fillStyle = 'rgba(20,26,18,0.3)'; rr(ctx, x, y + 6, w, h, 18); ctx.fill(); ctx.fillStyle = C.dark; rr(ctx, x, y, w, h, 18); ctx.fill(); }
+  function drawTitle() {
+    const top = L.topH, bot = L.stripY;
+    const sw = Math.min(330, W - 36), lh = 22, sh = 30 + 4 * lh + 8 + 74 + 26 + 46, blockH = 44 + sh;
+    const ty = top + Math.max(46, (bot - top - blockH) * 0.42 + 30);
+    const sx = (W - sw) / 2, sy = ty + 44;
+    ctx.globalAlpha = clamp(S.t / 0.4);
+    text('WHEELTHROWN', W / 2, ty, Math.min(46, W * 0.115), C.bone, 'center', W - 40, 0.12);
+    text('MERGE WET CLAY BEFORE IT DRIES', W / 2, ty + 26, 12, 'rgba(242,235,221,0.72)', 'center', W - 40);
+    slab(sx, sy, sw, sh);
+    const lines = ['DRAG CLAY ONTO ITS TWIN TO MERGE', 'CLAY DRIES PALE AND STICKS', 'EVERY MERGE WETS ITS NEIGHBOURS', 'FILL THE SHELF, NOT THE BOARD'];
+    lines.forEach((l, i) => {
+      const yy = sy + 30 + i * lh;
+      ctx.fillStyle = i === 1 ? C.dry : (i === 3 ? '#9fcbb0' : C.accent); ctx.beginPath(); ctx.arc(sx + 24, yy - 4, 4, 0, 7); ctx.fill();
+      text(l, sx + 38, yy, 12, C.bone, 'left', sw - 52);
+    });
+    const gy = sy + 30 + 4 * lh + 8;
+    ctx.fillStyle = 'rgba(242,235,221,0.1)'; ctx.fillRect(sx + 20, gy - 8, sw - 40, 1);
+    text('GLAZES', W / 2, gy + 12, 10, 'rgba(242,235,221,0.6)', 'center');
+    const gs = Math.min(44, (sw - 40) / 6), g0 = W / 2 - gs * 3;
+    GLAZES.forEach((g, i) => {
+      const x = g0 + gs * (i + 0.5), y = gy + 38, open = lifetime >= g.need;
+      if (open) {
+        ctx.fillStyle = g.c; ctx.beginPath(); ctx.arc(x, y, 13, 0, 7); ctx.fill();
+        if (g.speck) { ctx.fillStyle = C.dry; for (let k = 0; k < 7; k++) ctx.fillRect(x + Math.cos(k * 2.4) * 7 - 1, y + Math.sin(k * 2.4) * 7 - 1, 2, 2); }
+        ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.arc(x - 4, y - 4, 3.5, 0, 7); ctx.fill();
+      } else {
+        ctx.strokeStyle = 'rgba(242,235,221,0.35)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+        text(g.need, x + 0.5, y + 4, 11, 'rgba(242,235,221,0.55)', 'center', 0, 0.02);
+      }
+    });
+    const stY = gy + 74;
+    text('POTS FIRED ' + lifetime + '   BEST ' + S.best, W / 2, stY, 12, 'rgba(242,235,221,0.8)', 'center', sw - 30);
+    ctx.fillStyle = C.accent; rr(ctx, W / 2 - 92, stY + 18, 184, 40, 20); ctx.fill();
+    ctx.globalAlpha = clamp(S.t / 0.4) * (0.8 + 0.2 * Math.sin(S.clock * 4));
+    text('TAP TO THROW', W / 2, stY + 44, 16, C.bone, 'center');
+    ctx.globalAlpha = 1;
+  }
+  function drawOver() {
+    const a = clamp(S.t / 0.3);
+    const cw2 = Math.min(310, W - 40), ch = Math.min(300, L.ph - 10), x = (W - cw2) / 2;
+    const y = L.py + (L.ph - ch) / 2 + (1 - easeOut(a)) * 30;
+    ctx.globalAlpha = a;
+    slab(x, y, cw2, ch);
+    text('STUDIO FULL', W / 2, y + 46, 28, C.bone, 'center', cw2 - 30);
+    text('NO ROOM FOR THE NEXT LUMP', W / 2, y + 68, 10, 'rgba(242,235,221,0.55)', 'center', cw2 - 30);
+    const sr = 46, sy = y + 68 + (ch - 68 - 96) / 2 + 10;
+    ctx.save(); ctx.translate(W / 2, sy); const pk = 0.7 + 0.3 * easeBack(clamp((S.t - 0.1) / 0.35)); ctx.scale(pk, pk); ctx.rotate(-0.06);
+    stampCircle(0, 0, sr, C.dark);
+    text('SCORE', 0.5, -14, 9, 'rgba(242,235,221,0.6)', 'center');
+    text(S.score, 0.5, 12, 24, C.bone, 'center', sr * 2 - 22, 0.06);
+    ctx.restore();
+    text(S.newBest ? 'NEW BEST' : 'BEST ' + S.best, W / 2, sy + sr + 26, 15, S.newBest ? C.wetHi : C.bone, 'center');
+    text('POTS FIRED ' + S.fired + (S.rescues ? '   RESCUED ' + S.rescues : ''), W / 2, sy + sr + 46, 11, 'rgba(242,235,221,0.7)', 'center', cw2 - 30);
+    if (S.t > 0.5) { ctx.globalAlpha = a * (0.8 + 0.2 * Math.sin(S.clock * 4)); text('TAP TO THROW AGAIN', W / 2, y + ch - 22, 16, C.wetHi, 'center', cw2 - 30); }
+    ctx.globalAlpha = 1;
+  }
+  function draw() {
+    ctx.save();
+    if (S.shake > 0) ctx.translate((Math.random() - 0.5) * S.shake, (Math.random() - 0.5) * S.shake);
+    ctx.drawImage(bgWall, 0, 0, W, H);
+    if (S.mode === 'title') {
+      const list = []; for (let n = Math.max(0, lifetime - 8); n < lifetime; n++) list.push({ g: glazeAt(n) });
+      drawShelf(list);
+      drawStrip();
+      drawTitle();
+      ctx.restore();
+      return;
+    }
+    drawShelf(shelf);
+    drawBoard();
+    drawParts();
+    if (S.mode === 'over' && S.overK > 0) {
+      ctx.save(); ctx.globalCompositeOperation = 'saturation'; ctx.fillStyle = 'rgba(128,128,128,' + (0.4 * S.overK) + ')';
+      rr(ctx, L.px, L.py, L.pw, L.ph, 18); ctx.fill(); ctx.restore();
+    }
+    drawHeld();
+    drawStrip();
+    drawFlyers();
+    drawHud();
+    ctx.restore();
+    if (S.mode === 'paused') {
+      ctx.fillStyle = 'rgba(32,40,29,0.6)'; ctx.fillRect(0, 0, W, H);
+      text('PAUSED', W / 2, H * 0.45, 30, C.bone, 'center');
+      text('TAP TO CARRY ON', W / 2, H * 0.45 + 28, 13, 'rgba(242,235,221,0.75)', 'center');
+    }
+    if (S.mode === 'over') drawOver();
+  }
+
+  // ---------- loop ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, Math.max(0, (now - last) / 1000)); last = now;
+    if (S.mode !== 'paused') update(dt); else S.clock += dt;
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // test hook used by scripts/playtest.mjs and scripts/shoot.mjs
+  window.__game = {
+    state: () => ({ mode: S.mode, score: S.score }),
+    demo: (on) => {
+      autopilot = !!on; demoT = 0.3;
+      if (!autopilot) return;
+      held = pend = lifted = null;
+      // a fresh run skips ahead (muted) so the screenshots show a stocked shelf and a real score
+      if (S.mode === 'play' && S.play < 2) { mute = true; for (let k = 0; k < 300 * 60 && S.mode === 'play'; k++) update(1 / 60); mute = false; parts = []; drops = []; spots = []; floats = []; }
+    },
+    sim: (sec) => { mute = true; for (let k = 0; k < sec * 60 && S.mode === 'play'; k++) update(1 / 60); mute = false; return S.mode; },
+    dbg: () => ({ t: Math.round(S.play), score: S.score, fired: S.fired, free: empties().length, dry: (() => { let n = 0; each((p) => { if (p.dry) n++; }); return n; })(), lifetime, cells: (() => { const o = []; each((p, r, c) => o.push({ r, c, x: cx(c), y: cy(r), tier: p.tier, dry: p.dry, wet: +p.wet.toFixed(2) })); return o; })() })
+  };
+})();
+</script>
+</body>
+</html>

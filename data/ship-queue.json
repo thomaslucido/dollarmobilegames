@@ -6,6 +6,12 @@
       "why": "Tom's own game, shipping first by his call.",
       "status": "submitted",
       "submittedOn": "2026-10-21"
+    },
+    {
+      "slug": "wheelthrown",
+      "pickedOn": "2026-10-24",
+      "why": "Wheelthrown has the deepest pull of the three: the drying-clay and slip-splash twist makes every merge a placement decision, runs last 3 to 5 minutes, and lifetime glaze unlocks give a reason to come back, and its screenshots (a 42,000-point board with a full shelf of fired amphorae) sell it. It also rides the fastest-growing casual subgenre (merge) and its matte moss-and-terracotta merge board looks and plays nothing like Bank Shot, the neon slingshot golf game we already shipped.",
+      "status": "queued"
     }
   ]
 }

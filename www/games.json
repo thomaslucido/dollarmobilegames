@@ -29,5 +29,15 @@
     "added": "2026-10-21",
     "accent": "#2a9d8f",
     "status": "built"
+  },
+  {
+    "slug": "wheelthrown",
+    "name": "Wheelthrown",
+    "tagline": "Merge wet clay before it dries. Fire the big pots.",
+    "genre": "merge puzzle",
+    "bundleId": "com.thomaslucido.wheelthrown",
+    "added": "2026-10-24",
+    "accent": "#b8532e",
+    "status": "queued"
   }
 ]

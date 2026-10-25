@@ -18,5 +18,15 @@
         "slug": "burrowbank",
         "status": "built",
         "why": "QA passed"
+    },
+    {
+        "date": "2026-10-24",
+        "trend": "merge + progression",
+        "evidence": "Similarweb US iPhone top grossing Oct 19 2026 lists a merge-and-story title in the top 5; AppMagic H1 2026 merge +74% YoY (sources conflict on revenue). No chart snapshots in data/trends yet.",
+        "concept": "Potter's studio merge puzzle: clay dries over time, merges splash water to revive neighbours, amphoras get fired onto a shelf",
+        "name": "Wheelthrown",
+        "slug": "wheelthrown",
+        "status": "built",
+        "why": "QA passed"
     }
 ]
