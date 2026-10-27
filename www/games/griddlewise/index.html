@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Griddlewise</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#1d46a8;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block}
+  #safe{position:fixed;left:0;top:0;width:0;height:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="safe"></div>
+<script src="../../shared/game-kit.js"></script>
+<script>
+(function () {
+  'use strict';
+  const kit = GameKit.init({ slug: 'griddlewise', backColor: '#fff8e7' });
+  const cv = document.getElementById('c');
+  const safeEl = document.getElementById('safe');
+
+  // ---------- look ----------
+  const FONT = 'Rockwell, "Rockwell Nova", "American Typewriter", "Courier New", serif';
+  const C = {
+    wall: '#1d46a8', strip: '#18398c', slab: '#26262b', lip: '#3a3a40', shadow: '#141417',
+    plate: '#f7f4ec', well: '#e4dfd2', rim: '#1d46a8', butter: '#ffd23f', butterTop: '#fff0a0',
+    syrup: '#b5651d', shine: '#e09a4a', warn: '#ff6b3d', warnTop: '#ffb08f', cream: '#fff8e7', ink: '#26262b', accent: '#1f4fbf'
+  };
+  const FL = [
+    { n: 'Buttermilk', b: '#f0b04a', r: '#c98a2e' },
+    { n: 'Strawberry', b: '#f48fb1', r: '#d06a8e' },
+    { n: 'Matcha', b: '#8bc46a', r: '#64a046' },
+    { n: 'Blueberry', b: '#5fa8ee', r: '#3f80c8' },
+    { n: 'Cocoa', b: '#6b4230', r: '#4a2c1f' },
+    { n: 'Red velvet', b: '#c9303c', r: '#962230' },
+    { n: 'Ube', b: '#a86ad8', r: '#8048b0' }
+  ];
+
+  // ---------- the rush: griddle sizes ----------
+  const TABLE = [null, [3, 4, 2], [3, 4, 1], [4, 4, 2], [4, 4, 1], [5, 4, 2], [5, 4, 1], [5, 5, 2], [6, 5, 2], [6, 5, 1], [7, 5, 2], [7, 5, 2]];
+  const spec = (g) => { const t = TABLE[g] || [7, 5, 1]; return { N: t[0], H: t[1], E: t[2] }; };
+  const drainRate = (g) => (g < 10 ? 1 : Math.min(1.5, 1.15 + 0.05 * (g - 10)));
+  const START_CLOCK = 45, MAX_CLOCK = 99;
+
+  // ---------- helpers ----------
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeOut = (t) => 1 - (1 - t) * (1 - t) * (1 - t);
+  const easeIn = (t) => t * t * t;
+  const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const easeOutBack = (t) => { const c1 = 1.7, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+  const fmt = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function bestGriddle() { try { return Number(localStorage.getItem('griddlewise.bestGriddle')) || 0; } catch (e) { return 0; } }
+  function saveBestGriddle(n) { try { if (n > bestGriddle()) localStorage.setItem('griddlewise.bestGriddle', String(n)); } catch (e) {} }
+
+  // ---------- solver: best-first search over moves and flips ----------
+  function topRun(p) { if (!p.length) return 0; const c = p[p.length - 1]; let r = 1; while (r < p.length && p[p.length - 1 - r] === c) r++; return r; }
+  function isServed(p, h) { if (p.length !== h) return false; for (let i = 1; i < h; i++) if (p[i] !== p[0]) return false; return true; }
+  function heur(st) {
+    let b = 0; const bottoms = {};
+    for (const p of st) { for (let i = 1; i < p.length; i++) if (p[i] !== p[i - 1]) b++; if (p.length) bottoms[p[0]] = (bottoms[p[0]] || 0) + 1; }
+    for (const p of st) if (p.length && bottoms[p[0]] > 1) b++;
+    return b;
+  }
+  const stKey = (st) => st.map((p) => p.join('')).sort().join('|');
+  const orderedKey = (st) => st.map((p) => p.join('')).join('|');
+  function legalMoves(st, h) {
+    const out = [];
+    for (let s = 0; s < st.length; s++) {
+      const p = st[s]; if (!p.length || isServed(p, h)) continue;
+      const r = topRun(p), c = p[p.length - 1];
+      for (let d = 0; d < st.length; d++) {
+        if (d === s) continue; const q = st[d];
+        if (!q.length) { if (r < p.length) out.push({ t: 'm', s, d, n: r }); continue; }
+        if (q.length >= h || q[q.length - 1] !== c) continue;
+        out.push({ t: 'm', s, d, n: Math.min(r, h - q.length) });
+      }
+      for (let k = 2; k <= p.length; k++) {
+        const base = p.length - k; let pal = true;
+        for (let i = 0; i < k >> 1; i++) if (p[base + i] !== p[p.length - 1 - i]) { pal = false; break; }
+        if (!pal) out.push({ t: 'f', s, base });
+      }
+    }
+    return out;
+  }
+  function applyMove(st, m) {
+    const n = st.map((p) => p.slice());
+    if (m.t === 'm') { const run = n[m.s].splice(n[m.s].length - m.n, m.n); n[m.d].push(...run); }
+    else { const seg = n[m.s].splice(m.base).reverse(); n[m.s].push(...seg); }
+    return n;
+  }
+  function solve(start, h, cap) {
+    cap = cap || 40000;
+    const h0 = heur(start); if (h0 === 0) return [];
+    const nodes = [{ st: start, g: 0, par: -1, m: null }];
+    const heap = [], pri = [];
+    const push = (i, f) => { heap.push(i); pri.push(f); let k = heap.length - 1; while (k > 0) { const u = (k - 1) >> 1; if (pri[u] <= pri[k]) break; [heap[u], heap[k]] = [heap[k], heap[u]]; [pri[u], pri[k]] = [pri[k], pri[u]]; k = u; } };
+    const pop = () => { const top = heap[0], lh = heap.pop(), lp = pri.pop(); if (heap.length) { heap[0] = lh; pri[0] = lp; let k = 0; for (;;) { const a = 2 * k + 1, b = a + 1; let m = k; if (a < heap.length && pri[a] < pri[m]) m = a; if (b < heap.length && pri[b] < pri[m]) m = b; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; [pri[m], pri[k]] = [pri[k], pri[m]]; k = m; } } return top; };
+    const seen = new Set([stKey(start)]);
+    push(0, h0); let expanded = 0;
+    while (heap.length) {
+      const i = pop(), nd = nodes[i];
+      if (++expanded > cap) return null;
+      for (const m of legalMoves(nd.st, h)) {
+        const ns = applyMove(nd.st, m), k = stKey(ns);
+        if (seen.has(k)) continue; seen.add(k);
+        const hv = heur(ns);
+        nodes.push({ st: ns, g: nd.g + 1, par: i, m });
+        if (hv === 0) { const path = []; let j = nodes.length - 1; while (nodes[j].par >= 0) { path.push(nodes[j].m); j = nodes[j].par; } return path.reverse(); }
+        push(nodes.length - 1, hv + 0.5 * (nd.g + 1));
+      }
+    }
+    return null;
+  }
+
+  // ---------- dealing: random, never pre-sorted, solver-checked ----------
+  function rawDeal(N, H, E) {
+    const all = []; for (let c = 0; c < N; c++) for (let i = 0; i < H; i++) all.push(c);
+    shuffle(all);
+    const st = []; for (let p = 0; p < N; p++) st.push(all.slice(p * H, p * H + H));
+    for (const p of st) {
+      if (p.every((v) => v === p[0])) return null;
+      if (p[H - 1] === p[H - 2] && p[H - 2] === p[H - 3]) return null;
+    }
+    for (let e = 0; e < E; e++) st.push([]);
+    return shuffle(st);
+  }
+  function makeDeal(N, H, E) {
+    let last = null;
+    for (let tries = 0; tries < 30; tries++) {
+      let st = null;
+      for (let k = 0; k < 500 && !st; k++) st = rawDeal(N, H, E);
+      last = st;
+      const plan = solve(st.map((p) => p.slice()), H);
+      if (plan) return { st, plan };
+    }
+    return { st: last, plan: null };
+  }
+
+  // ---------- state ----------
+  const S = {
+    mode: 'title', t: 0, time: 0, score: 0, shown: 0, griddle: 1, cleared: 0, served: 0, clock: START_CLOCK,
+    flips: 0, moves: 0, combo: 0, lastServe: -99, N: 3, H: 4, E: 2, sel: null, selT: 0, trans: null,
+    demo: false, plan: null, planKey: '', demoT: 0, solveCool: 0, lastTick: 99, newBest: false, shake: 0, titleT: 0
+  };
+  let plates = [], anims = [], parts = [], floats = [], stamps = [], tokens = [], buttons = [], G = null;
+  let W = 0, H = 0, safeTop = 0, safeBot = 0;
+  const L = {};
+  const TP = { p: [1, 3, 0, 5, 2], served: false, sh: 0, sq: null };   // the title-screen stack
+
+  const ctx = kit.fitCanvas(cv, (s) => { W = s.w; H = s.h; layout(); });
+
+  function layout() {
+    safeTop = parseFloat(getComputedStyle(safeEl).paddingTop) || 0;
+    safeBot = parseFloat(getComputedStyle(safeEl).paddingBottom) || 0;
+    const hudH = Math.max(124, H * 0.16);
+    const stripH = Math.max(64, H * 0.11) + safeBot;
+    L.slabTop = safeTop + hudH; L.stripTop = H - stripH; L.slabBot = L.stripTop - 10;
+    L.stripMid = L.stripTop + (stripH - safeBot) / 2;
+    L.slabX = 8; L.slabW = W - 16;
+    layoutPlates(plates);
+    // title stack
+    Object.assign(TP, { x: W / 2, y: Math.max(H * 0.22 + 250, Math.min(H * 0.56, H - 250)), colW: 130, pw: 104, ph: 32, step: 29.5, k: 32 / 22, rowTop: 0 });
+  }
+  function layoutPlates(list) {
+    const n = list.length; if (!n) return;
+    const top = Math.ceil(n / 2), bot = n - top;
+    const colW = Math.min(88, (W - 32) / top);
+    const inTop = L.slabTop + 14, inBot = L.slabBot - 20, rowH = (inBot - inTop) / 2;
+    const base = top <= 4 ? 24 : 22;
+    const pw = colW * 0.84;
+    const k = clamp(Math.min((rowH - 70) / (S.H * (base - 2) + 16), pw / 2.1 / base), 0.8, 1.45);
+    const ph = base * k, step = ph - 2 * k;
+    const visH = S.H * step + 2 * k + 8;
+    list.forEach((pl, i) => {
+      const r = i < top ? 0 : 1, j = r ? i - top : i, cnt = r ? bot : top;
+      const rowTop = inTop + r * rowH;
+      pl.x = W / 2 + (j - (cnt - 1) / 2) * colW;
+      pl.y = Math.min(rowTop + rowH - 14, rowTop + rowH * 0.56 + visH / 2);
+      Object.assign(pl, { colW, pw, ph, step, rowTop, rowBot: rowTop + rowH, k });
+    });
+  }
+  const bottomY = (pl, i) => pl.y + pl.k - i * pl.step;
+
+  // ---------- sound ----------
+  const snd = (f, d, t, v) => GameKit.sound(f, d, t, v);
+  const later = (ms, fn) => setTimeout(fn, ms);
+  const sLift = () => snd(520, 0.03, 'sine', 0.05);
+  const sPat = () => { snd(180, 0.05, 'sine', 0.09); snd(90, 0.05, 'square', 0.025); };
+  const sBad = () => snd(120, 0.03, 'square', 0.03);
+  const sFlip = () => { snd(300, 0.04, 'triangle', 0.05); later(40, () => snd(480, 0.04, 'triangle', 0.05)); later(80, () => snd(700, 0.05, 'triangle', 0.05)); };
+  const sServe = (combo) => { snd(1200, 0.02, 'sine', 0.04); later(30, () => snd(1500, 0.02, 'sine', 0.04)); later(60, () => snd(1800, 0.02, 'sine', 0.04)); later(100, () => snd(660 * Math.pow(1.12, combo - 1), 0.1, 'triangle', 0.06)); };
+  const sClear = () => [523, 659, 784, 1046].forEach((f, k) => later(k * 70, () => snd(f, 0.06, 'triangle', 0.06)));
+  const sTick = () => snd(440, 0.02, 'sine', 0.05);
+  const sOver = () => { snd(392, 0.18, 'triangle', 0.07); later(200, () => snd(262, 0.18, 'triangle', 0.07)); };
+
+  // ---------- effects ----------
+  function burst(x, y, cols, n, sp) {
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.4, s = (sp || 160) * (0.4 + Math.random() * 0.8);
+      parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.6 + Math.random() * 0.5, max: 1.1, col: cols[i % cols.length], s: 3 + Math.random() * 3, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 12 });
+    }
+  }
+  function floatText(txt, x, y, col, size) { floats.push({ txt, x, y, col, size: size || 18, t: 0, life: 0.95 }); }
+  function stamp(txt, sub, opts) { stamps.push(Object.assign({ txt, sub, t: 0, life: 1.1, y: (L.slabTop + L.slabBot) / 2 }, opts || {})); }
+  const clockPos = () => ({ x: W / 2, y: safeTop + 50 });
+
+  // ---------- the rush ----------
+  function newPlate(p) { return { p, served: false, servedT: 0, fx: true, sh: 0, sq: null, tok: false }; }
+  function newGriddle() {
+    const sp = spec(S.griddle); S.N = sp.N; S.H = sp.H; S.E = sp.E;
+    const d = makeDeal(sp.N, sp.H, sp.E);
+    plates = d.st.map((p) => newPlate(p.slice()));
+    layoutPlates(plates);
+    S.flips = 0; S.sel = null; G = null; anims = [];
+    S.plan = d.plan ? d.plan.slice() : null; S.planKey = orderedKey(d.st); S.demoT = 0;
+    S.trans = { phase: 'in', t: 0 };
+    stamp('GRIDDLE ' + S.griddle, sp.N + ' flavours · ' + sp.E + (sp.E === 1 ? ' spare plate' : ' spare plates'), { life: 1.25 });
+  }
+  function startRush() {
+    Object.assign(S, { mode: 'play', t: 0, score: 0, shown: 0, griddle: 1, cleared: 0, served: 0, clock: START_CLOCK, flips: 0, moves: 0, combo: 0, lastServe: -99, sel: null, lastTick: 99, newBest: false, shake: 0 });
+    tokens = []; parts = []; floats = []; stamps = []; anims = [];
+    newGriddle();
+    kit.buzz();
+  }
+  function gameOver() {
+    S.mode = 'over'; S.t = 0; S.clock = 0; S.sel = null; G = null; S.shake = 6;
+    S.newBest = kit.saveBest(S.score);
+    saveBestGriddle(S.griddle);
+    sOver(); kit.buzz('heavy');
+  }
+
+  function canMove(src, dst) {
+    if (!src || !dst || src === dst || dst.served || src.served || !src.p.length) return false;
+    if (dst.p.length >= S.H) return false;
+    return !dst.p.length || dst.p[dst.p.length - 1] === src.p[src.p.length - 1];
+  }
+  function liftNow(pl) { return S.sel === pl ? 10 * easeOut(Math.min(1, S.selT / 0.09)) + (S.selT > 0.09 ? Math.sin(S.time * 6) : 0) : 0; }
+
+  function endAnim(a) {
+    if (a.type === 'move') { a.dst.sq = { t: 0, from: a.toBase }; if (!a.landed) sPat(); }
+    else if (a.type === 'flip') { if (!a.landed) { a.pl.sq = { t: 0, from: a.base }; sPat(); } }
+  }
+  function finishAnims(pl) {
+    const keep = [];
+    for (const a of anims) { if (a.src === pl || a.dst === pl || a.pl === pl) endAnim(a); else keep.push(a); }
+    anims = keep;
+  }
+
+  function doMove(src, dst) {
+    finishAnims(src); finishAnims(dst);
+    const r = topRun(src.p), n = Math.min(r, S.H - dst.p.length);
+    const lift = liftNow(src);
+    const fromBase = src.p.length - n, toBase = dst.p.length;
+    const y0 = bottomY(src, fromBase) - lift;
+    const items = src.p.splice(fromBase, n); dst.p.push(...items);
+    anims.push({ type: 'move', src, dst, items, toBase, y0, t: 0, dur: 0.22 });
+    S.sel = null; S.moves++;
+    if (isServed(dst.p, S.H)) serve(dst, 0.22);
+  }
+  function doFlip(pl, base, fromGesture) {
+    finishAnims(pl); S.sel = null;
+    const items = pl.p.slice(base);
+    pl.p.splice(base); pl.p.push(...items.slice().reverse());
+    anims.push({ type: 'flip', pl, base, items, t: fromGesture ? 0.12 : 0, dur: 0.48 });
+    if (pl === TP) return;
+    S.clock -= 1; S.flips++; S.moves++;
+    const c = clockPos(); floatText('-1s', c.x + 52, c.y + 8, C.warn, 20);
+    sFlip(); kit.buzz();
+  }
+  function serve(pl, delay) {
+    pl.served = true; pl.servedT = S.time + delay; pl.fx = false;
+    S.served++;
+    S.combo = S.time - S.lastServe <= 3 ? Math.min(3, S.combo + 1) : 1; S.lastServe = S.time;
+    pl.pts = (50 + 25 * (S.griddle - 1)) * S.combo; S.score += pl.pts;
+    pl.bonusT = S.H === 5 ? 4 : 3;
+    S.clock = Math.min(MAX_CLOCK, S.clock + pl.bonusT);
+    if (plates.filter((q) => q.served).length === S.N) clearGriddle();
+  }
+  function clearGriddle() {
+    const g = S.griddle;
+    const tidy = S.flips <= S.N - 1;
+    S.score += 200 * g + (tidy ? 150 : 0);
+    S.clock = Math.min(MAX_CLOCK, S.clock + 4);
+    S.cleared++; S.sel = null; G = null;
+    S.trans = { phase: 'hold', t: 0, tidy, pts: 200 * g, fx: false };
+  }
+
+  // ---------- input ----------
+  function plateAt(x, y) {
+    for (const pl of plates) if (Math.abs(x - pl.x) <= pl.colW / 2 && y >= pl.rowTop && y <= pl.y + 18) return pl;
+    return null;
+  }
+  function pancakeAt(pl, y) {
+    if (!pl.p.length) return -1;
+    const i = Math.floor((bottomY(pl, 0) - y) / pl.step);
+    if (i >= pl.p.length) return -1;
+    return Math.max(0, i);
+  }
+  function tapPlate(pl) {
+    if (!pl) { if (S.sel) { S.sel = null; } return; }
+    if (pl.served) return;
+    if (!S.sel) { if (pl.p.length) { finishAnims(pl); S.sel = pl; S.selT = 0; sLift(); } return; }
+    if (S.sel === pl) { S.sel = null; snd(400, 0.03, 'sine', 0.04); return; }
+    const src = S.sel;
+    if (canMove(src, pl)) doMove(src, pl);
+    else { pl.sh = 0.22; sBad(); S.sel = null; }
+  }
+  const hitButton = (x, y) => buttons.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+  function onDown(e) {
+    e.preventDefault();
+    const x = e.clientX, y = e.clientY;
+    const b = hitButton(x, y);
+    if (b) { b.go(); return; }
+    if (S.mode === 'title') { startRush(); return; }
+    if (S.mode === 'over') { if (S.t > 0.6) startRush(); return; }
+    if (S.mode === 'paused') { S.mode = 'play'; return; }
+    if (S.mode !== 'play' || S.trans) return;
+    const pl = plateAt(x, y);
+    const pi = pl ? pancakeAt(pl, y) : -1;
+    G = { id: e.pointerId, x0: x, y0: y, pl, pi, armed: false, intent: false, prog: 0, ok: !!pl && !pl.served && pi >= 0 && pi < pl.p.length - 1 };
+  }
+  function onMove(e) {
+    if (!G || e.pointerId !== G.id) return;
+    const dy = G.y0 - e.clientY;
+    if (dy >= 24) {
+      if (!G.intent) {
+        G.intent = true;
+        if (S.sel) S.sel = null;                                      // a lifted run drops back first
+        if (!G.ok && G.pl && !G.pl.served && G.pl.p.length) { G.pl.sh = 0.22; sBad(); }
+        else if (G.ok) { snd(620, 0.03, 'triangle', 0.04); finishAnims(G.pl); }
+      }
+      G.armed = true;
+    } else if (dy < 0) G.armed = false;
+    G.prog = G.ok ? (G.armed ? 1 : clamp(dy / 24, 0, 1)) : 0;
+  }
+  function onUp(e) {
+    if (!G || e.pointerId !== G.id) return;
+    const g = G; G = null;
+    if (S.mode !== 'play' || S.trans) return;
+    if (g.intent) { if (g.armed && g.ok && g.pi < g.pl.p.length - 1) doFlip(g.pl, g.pi, true); return; }
+    tapPlate(g.pl);
+  }
+  cv.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', () => { G = null; });
+  kit.onPause(() => { if (S.mode === 'play') S.mode = 'paused'; G = null; });
+
+  // ---------- demo autopilot ----------
+  function demoStep(dt) {
+    if (S.solveCool > 0) S.solveCool -= dt;
+    S.demoT += dt;
+    const st = plates.map((pl) => pl.p.slice());
+    if (!S.plan || !S.plan.length || orderedKey(st) !== S.planKey) {
+      if (S.solveCool > 0) return;
+      S.plan = solve(st, S.H); S.planKey = orderedKey(st);
+      if (!S.plan) { S.solveCool = 1.5; const ms = legalMoves(st, S.H).filter((m) => m.t === 'm'); S.plan = ms.length ? [ms[Math.floor(Math.random() * ms.length)]] : null; if (!S.plan) return; }
+    }
+    const m = S.plan[0];
+    if (m.t === 'm' && S.demoT >= 0.25 && S.sel !== plates[m.s]) { S.sel = plates[m.s]; S.selT = 0; sLift(); }
+    if (S.demoT < 0.45) return;
+    if (anims.some((a) => a.src === plates[m.s] || a.dst === plates[m.s] || a.pl === plates[m.s] || (m.t === 'm' && (a.dst === plates[m.d] || a.src === plates[m.d])))) return;
+    S.demoT = 0; S.plan.shift();
+    if (m.t === 'm') { S.sel = plates[m.s]; if (canMove(plates[m.s], plates[m.d])) doMove(plates[m.s], plates[m.d]); else S.planKey = ''; }
+    else doFlip(plates[m.s], m.base, false);
+    S.planKey = orderedKey(plates.map((pl) => pl.p));
+  }
+
+  // ---------- update ----------
+  function update(dt) {
+    S.time += dt; S.t += dt;
+    S.shake = Math.max(0, S.shake - 30 * dt);
+    S.shown += (S.score - S.shown) * Math.min(1, dt * 10);
+    if (Math.abs(S.score - S.shown) < 0.5) S.shown = S.score;
+    if (S.sel) S.selT += dt;
+
+    // animations
+    const keep = [];
+    for (const a of anims) {
+      a.t += dt;
+      if (a.type === 'flip' && !a.landed && a.t >= 0.38) { a.landed = true; a.pl.sq = { t: 0, from: a.base }; sPat(); }
+      if (a.t >= a.dur) endAnim(a); else keep.push(a);
+    }
+    anims = keep;
+    for (const pl of plates.concat([TP])) {
+      if (pl.sh > 0) pl.sh = Math.max(0, pl.sh - dt);
+      if (pl.sq) { pl.sq.t += dt; if (pl.sq.t > 0.07) pl.sq = null; }
+      if (pl.served && !pl.fx && S.time >= pl.servedT) {
+        pl.fx = true;
+        sServe(S.combo); kit.buzz();
+        const top = bottomY(pl, pl.p.length - 1) - pl.ph;
+        burst(pl.x, top, [C.butter, C.butterTop, C.cream, FL[pl.p[0]].b], 14, 170);
+        floatText('+' + pl.pts, pl.x, top - 18, C.cream, 18);
+        const c = clockPos(); floatText('+' + pl.bonusT + 's', c.x + 52, c.y + 8, C.butter, 20);
+      }
+    }
+    for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 520 * dt; p.rot += p.vr * dt; p.life -= dt; }
+    parts = parts.filter((p) => p.life > 0);
+    for (const f of floats) f.t += dt;
+    floats = floats.filter((f) => f.t < f.life);
+    for (const s of stamps) s.t += dt;
+    stamps = stamps.filter((s) => s.t < s.life);
+
+    if (S.mode === 'title') {
+      S.titleT += dt;
+      if (S.titleT > 2 && !anims.length) {
+        S.titleT = 0;
+        const opts = []; for (let b = 0; b < TP.p.length - 1; b++) { const seg = TP.p.slice(b); if (seg.join() !== seg.slice().reverse().join()) opts.push(b); }
+        if (opts.length) doFlip(TP, opts[Math.floor(Math.random() * opts.length)], false);
+      }
+      return;
+    }
+    if (S.mode !== 'play') return;
+
+    const tr = S.trans;
+    if (tr) {
+      tr.t += dt;
+      if (tr.phase === 'hold') {
+        if (!tr.fx && tr.t >= 0.3) {
+          tr.fx = true; sClear(); kit.buzz('medium'); S.shake = 4;
+          stamp('GRIDDLE CLEARED', '+' + fmt(tr.pts) + '  ·  +4s', { life: 1.2 });
+          if (tr.tidy) stamp('TIDY  +150', 'few flips', { life: 1.2, y: (L.slabTop + L.slabBot) / 2 + 92, icon: true, rot: 0.05 });
+          for (const pl of plates) if (pl.served) burst(pl.x, bottomY(pl, pl.p.length - 1) - pl.ph, FL.slice(0, S.N).map((f) => f.b).concat([C.butter]), 10, 220);
+        }
+        if (tr.t >= 1.0) { anims.forEach(endAnim); anims = []; tr.phase = 'out'; tr.t = 0; }
+      } else if (tr.phase === 'out') {
+        plates.forEach((pl, j) => { if (pl.served && !pl.tok && tr.t >= j * 0.06 + 0.3) { pl.tok = true; tokens.push(pl.p[0]); snd(880 + tokens.length % 5 * 60, 0.03, 'sine', 0.04); } });
+        if (tr.t >= 0.35 + 0.06 * (plates.length - 1)) { S.griddle++; newGriddle(); }
+      } else if (tr.phase === 'in') {
+        if (tr.t >= 0.3 + 0.05 * (plates.length - 1)) S.trans = null;
+      }
+      return;
+    }
+
+    S.clock -= drainRate(S.griddle) * dt;
+    if (S.clock < 10 && S.clock > 0) { const sec = Math.ceil(S.clock); if (sec !== S.lastTick) { S.lastTick = sec; sTick(); } }
+    else if (S.clock >= 10) S.lastTick = 99;
+    if (S.clock <= 0) { gameOver(); return; }
+    if (S.combo && S.time - S.lastServe > 3) S.combo = 0;
+    if (S.demo) demoStep(dt);
+  }
+
+  // ---------- drawing primitives ----------
+  function rr(x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function ell(x, y, rx, ry) { ctx.beginPath(); ctx.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2); }
+  function text(t, x, y, size, col, align, shadow) {
+    ctx.font = '700 ' + size + 'px ' + FONT; ctx.textAlign = align || 'center'; ctx.textBaseline = 'alphabetic';
+    if (shadow) { ctx.fillStyle = shadow; ctx.fillText(t, x + Math.max(2, size / 14), y + Math.max(2, size / 14)); }
+    ctx.fillStyle = col; ctx.fillText(t, x, y);
+  }
+  function panel(x, y, w, h, col) {
+    ctx.fillStyle = C.ink; rr(x + 6, y + 6, w, h, 10); ctx.fill();
+    ctx.fillStyle = col || C.butter; rr(x, y, w, h, 10); ctx.fill();
+  }
+  function pill(label, x, y, w, h, go) {
+    ctx.fillStyle = C.ink; rr(x, y, w, h, h / 2); ctx.fill();
+    text(label, x + w / 2, y + h / 2 + 6, 17, C.cream);
+    if (go) buttons.push({ x, y, w, h, go });
+  }
+
+  // a pancake in side view, bottom-centre at (cx, yb)
+  function pancake(cx, yb, w, h, f) {
+    const F = FL[f], s = h / 22, x = cx - w / 2, top = yb - h, r = Math.min(8 * s, h / 2);
+    ctx.fillStyle = F.r; rr(x, top, w, h, r); ctx.fill();
+    ctx.fillStyle = F.b; rr(x, top, w, h - 4 * s, r); ctx.fill();
+    mark(f, x, top, w, h - 4 * s, s);
+  }
+  function dots(pts, x, y, w, h, rad, col) { ctx.fillStyle = col; for (const p of pts) { ctx.beginPath(); ctx.arc(x + p[0] * w, y + p[1] * h, rad, 0, Math.PI * 2); ctx.fill(); } }
+  function mark(f, x, y, w, h, s) {
+    if (f === 0) { ctx.fillStyle = '#ffd98a'; rr(x + w * 0.2, y + 3.5 * s, w * 0.6, 2.2 * s, 1.1 * s); ctx.fill(); }
+    else if (f === 1) {
+      ctx.fillStyle = '#fff3c4';
+      for (const p of [[0.2, 0.4], [0.36, 0.66], [0.52, 0.34], [0.67, 0.64], [0.82, 0.4]]) { ctx.save(); ctx.translate(x + p[0] * w, y + p[1] * h); ctx.rotate(0.5); ctx.fillRect(-1 * s, -1.8 * s, 2 * s, 3.6 * s); ctx.restore(); }
+    } else if (f === 2) {
+      ctx.strokeStyle = '#5a9440'; ctx.lineWidth = 2.2 * s; ctx.lineCap = 'round'; ctx.beginPath();
+      for (let i = 0; i <= 16; i++) { const u = i / 16, px = x + w * (0.16 + 0.68 * u), py = y + h * 0.52 + Math.sin(u * Math.PI * 4) * h * 0.18; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+      ctx.stroke();
+    } else if (f === 3) dots([[0.22, 0.52], [0.42, 0.36], [0.6, 0.62], [0.8, 0.42]], x, y, w, h, 2.7 * s, '#24398a');
+    else if (f === 4) {
+      ctx.fillStyle = '#2e1c14';
+      for (const p of [[0.18, 0.42], [0.34, 0.64], [0.5, 0.34], [0.66, 0.6], [0.82, 0.38]]) ctx.fillRect(x + p[0] * w - 1.7 * s, y + p[1] * h - 1.7 * s, 3.4 * s, 3.4 * s);
+      dots([[0.42, 0.44]], x, y, w, h, 1.5 * s, '#9a6a52');
+    } else if (f === 5) dots([[0.18, 0.5], [0.34, 0.34], [0.5, 0.62], [0.66, 0.38], [0.82, 0.58]], x, y, w, h, 1.9 * s, '#fff3e0');
+    else if (f === 6) {
+      ctx.strokeStyle = '#f4eaff'; ctx.lineWidth = 2.4 * s; ctx.lineCap = 'round';
+      for (const u of [0.32, 0.62]) { ctx.beginPath(); ctx.moveTo(x + w * u, y + h * 0.74); ctx.lineTo(x + w * (u + 0.09), y + h * 0.3); ctx.stroke(); }
+    }
+  }
+  function spatula(x, yb, pl, off) {
+    const s = pl.k, bw = pl.pw * 1.02, bx = x - pl.pw * 0.5 + off * (pl.colW + 90 * s), by = yb - 3 * s, bh = 6 * s;
+    ctx.fillStyle = C.ink; rr(bx, by, bw, bh, 2 * s); ctx.fill();
+    ctx.strokeStyle = C.plate; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = C.wall; rr(bx + bw * 0.22, by + 1.6 * s, bw * 0.2, 2.8 * s, 1.4 * s); ctx.fill(); rr(bx + bw * 0.52, by + 1.6 * s, bw * 0.2, 2.8 * s, 1.4 * s); ctx.fill();
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 4 * s; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(bx + bw - 2, by + bh / 2); ctx.lineTo(bx + bw + 14 * s, by + 9 * s); ctx.stroke();
+    ctx.fillStyle = C.butter; rr(bx + bw + 12 * s, by + 5 * s, 44 * s, 9 * s, 4.5 * s); ctx.fill();
+    ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(bx + bw + 50 * s, by + 9.5 * s, 1.8 * s, 0, Math.PI * 2); ctx.fill();
+  }
+  function drip(x, y, len, w) {
+    if (len <= 0.5) return;
+    ctx.fillRect(x - w / 2, y, w, len); ctx.beginPath(); ctx.arc(x, y + len, w * 0.75, 0, Math.PI * 2); ctx.fill();
+  }
+  function dressing(pl, x, y, t) {
+    const i = pl.p.length - 1, s = pl.k, yb = y + pl.k - i * pl.step, top = yb - pl.ph, w = pl.pw, h = pl.ph;
+    const sp = clamp((t - 0.12) / 0.3, 0, 1);
+    if (sp > 0) {
+      ctx.fillStyle = C.syrup;
+      rr(x - w / 2 - 1, top - 1, w + 2, h * 0.42 + 1, Math.min(8 * s, h / 2)); ctx.fill();
+      const run = h * 0.4 + sp * (h * 0.6 + pl.step * 0.8);
+      rr(x - w / 2 - 1, top + 2, 5 * s, run, 2.5 * s); ctx.fill();
+      rr(x + w / 2 - 4 * s, top + 2, 5 * s, run * 0.82, 2.5 * s); ctx.fill();
+      drip(x - w * 0.16, top + h * 0.38, sp * h * 0.5, 2.6 * s);
+      drip(x + w * 0.22, top + h * 0.38, sp * h * 0.32, 2.2 * s);
+      ctx.fillStyle = C.shine; rr(x - w * 0.34, top + 2.2 * s, w * 0.2, 2 * s, s); ctx.fill();
+    }
+    const bs = t < 0.12 ? 1.15 * (t / 0.12) : (t < 0.18 ? 1.15 - 0.15 * ((t - 0.12) / 0.06) : 1);
+    if (bs > 0.01) {
+      const bw = w * 0.32 * bs, bh = h * 0.5 * bs, bx = x - bw / 2 + w * 0.06, by = top - bh + 3 * s;
+      ctx.fillStyle = C.butter; rr(bx, by, bw, bh, 3 * s); ctx.fill();
+      ctx.fillStyle = C.butterTop; rr(bx, by, bw, bh * 0.36, 3 * s); ctx.fill();
+    }
+  }
+
+  // a plate and its stack; ox/oy offset it (griddle slide-in and slide-out)
+  function drawPlate(pl, ox, oy) {
+    const x = pl.x + ox + (pl.sh > 0 ? Math.sin(S.time * 80) * 2.5 * (pl.sh / 0.22) : 0), y = pl.y + oy;
+    const servedVis = pl.served && S.time >= pl.servedT;
+    const rx = Math.min(pl.colW / 2 - 3, pl.pw / 2 + 9), ry = 7 * pl.k;
+    ctx.fillStyle = C.plate; ell(x, y, rx, ry); ctx.fill();
+    ctx.strokeStyle = servedVis ? C.butter : C.rim; ctx.lineWidth = 2.2; ctx.stroke();
+    ctx.fillStyle = C.well; ell(x, y - 0.5, rx * 0.62, ry * 0.55); ctx.fill();
+    const len = pl.p.length;
+    let hide = len;
+    for (const a of anims) { if (a.dst === pl) hide = Math.min(hide, a.toBase); if (a.type === 'flip' && a.pl === pl) hide = Math.min(hide, a.base); }
+    const prev = G && G.pl === pl && G.ok && G.prog > 0 && G.pi < len - 1 ? G.pi : -1;
+    if (prev >= 0) hide = Math.min(hide, prev);
+    const lifted = S.sel === pl ? len - topRun(pl.p) : len, lift = liftNow(pl);
+    if (lift > 0 && lifted < hide) {
+      ctx.fillStyle = 'rgba(10,10,14,.35)'; rr(x - pl.pw * 0.46, y + pl.k - lifted * pl.step - 5 * pl.k, pl.pw * 0.92, 5 * pl.k, 2.5 * pl.k); ctx.fill();
+    }
+    const sq = pl.sq;
+    let saved = false;
+    for (let i = 0; i < hide; i++) {
+      const yb = y + pl.k - i * pl.step;
+      if (sq && i === sq.from) {
+        const k = 1 - sq.t / 0.07; ctx.save(); saved = true;
+        ctx.translate(x, yb); ctx.scale(1 + 0.08 * k, 1 - 0.1 * k); ctx.translate(-x, -yb);
+      }
+      pancake(x, yb - (i >= lifted ? lift : 0), pl.pw, pl.ph, pl.p[i]);
+    }
+    if (saved) ctx.restore();
+    if (servedVis && hide === len) dressing(pl, x, y, S.time - pl.servedT);
+    if (prev >= 0) {
+      const yb = y + pl.k - prev * pl.step;
+      spatula(x, yb, pl, 1 - easeOut(G.prog));
+      drawSeg(pl, x, yb, pl.p.slice(prev), 6 * G.prog);
+    }
+  }
+  function drawSeg(pl, x, yb, items, tiltDeg) {
+    ctx.save();
+    if (tiltDeg) { const px = x - pl.pw / 2; ctx.translate(px, yb); ctx.rotate(-tiltDeg * Math.PI / 180); ctx.translate(-px, -yb); }
+    items.forEach((f, k) => pancake(x, yb - k * pl.step, pl.pw, pl.ph, f));
+    ctx.restore();
+  }
+  function drawAnims() {
+    for (const a of anims) {
+      if (a.type === 'move') {
+        const e = easeInOut(clamp(a.t / a.dur, 0, 1)), src = a.src, dst = a.dst;
+        const b0 = a.y0, b1 = bottomY(dst, a.toBase), bump = Math.abs(b0 - b1) / 2 + 40;
+        const gx = lerp(src.x, dst.x, e), gb = lerp(b0, b1, e) - bump * Math.sin(Math.PI * e);
+        a.items.forEach((f, k) => pancake(gx, gb - k * dst.step, dst.pw, dst.ph, f));
+      } else if (a.type === 'flip') {
+        const pl = a.pl, n = a.items.length, x = pl.x, yb = bottomY(pl, a.base);
+        const ytop = yb - (n - 1) * pl.step - pl.ph, cy = (yb + ytop) / 2, t = a.t;
+        const fresh = a.items.slice().reverse();
+        if (t < 0.12) { const e = easeOut(t / 0.12); spatula(x, yb, pl, 1 - e); drawSeg(pl, x, yb, a.items, 6 * e); }
+        else if (t < 0.38) {
+          const p = (t - 0.12) / 0.26, rise = 30 * Math.sin(Math.PI * p), sy = Math.max(0.04, Math.abs(Math.cos(Math.PI * p)));
+          spatula(x, yb - rise * 0.25, pl, 0);
+          ctx.save(); ctx.translate(x, cy - rise); ctx.scale(1, sy); ctx.translate(-x, -cy);
+          drawSeg(pl, x, yb, p < 0.5 ? a.items : fresh, p < 0.25 ? 6 * (1 - p / 0.25) : 0);
+          ctx.restore();
+        } else {
+          const q = clamp((t - 0.38) / 0.1, 0, 1), k = Math.max(0, 1 - (t - 0.38) / 0.07);
+          spatula(x, yb, pl, easeIn(q));
+          ctx.save(); ctx.translate(x, yb); ctx.scale(1 + 0.08 * k, 1 - 0.1 * k); ctx.translate(-x, -yb);
+          drawSeg(pl, x, yb, fresh, 0); ctx.restore();
+        }
+      }
+    }
+  }
+
+  function drawTiles() {
+    ctx.fillStyle = C.wall; ctx.fillRect(-10, -10, W + 20, H + 20);
+    ctx.strokeStyle = 'rgba(255,255,255,.13)'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    const ox = (W / 2) % 64;
+    for (let x = ox; x < W; x += 64) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let y = 32; y < H; y += 64) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+  }
+  function slabPath(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r); ctx.lineTo(x + w, y + h); ctx.closePath(); }
+  function drawSlab() {
+    const x = L.slabX, y = L.slabTop, w = L.slabW, h = L.slabBot - L.slabTop;
+    ctx.fillStyle = C.shadow; slabPath(x + 6, y + 6, w, h, 18); ctx.fill();
+    ctx.fillStyle = C.slab; slabPath(x, y, w, h, 18); ctx.fill();
+    ctx.fillStyle = C.lip; ctx.fillRect(x, y + h - 12, w, 12);
+    ctx.fillStyle = C.shadow; ctx.fillRect(x, y + h - 12, w, 2);
+  }
+
+  function drawClock() {
+    const c = clockPos(), melt = S.mode === 'over' ? easeOut(clamp(S.t / 0.4, 0, 1)) : 0;
+    const low = S.clock < 10 && S.mode === 'play', flash = low && Math.floor(S.time * 4) % 2 === 0;
+    const pkY = c.y + 32;
+    pancake(c.x, pkY, 86, 22, 0);
+    const frac = clamp(S.clock / MAX_CLOCK, 0, 1), side = Math.max(3, 58 * Math.sqrt(frac));
+    let bw = side, bh = side;
+    if (melt) { bw = Math.max(bw, 30) * (1 + 0.9 * melt); bh = Math.max(4, Math.max(bh, 20) * (1 - 0.85 * melt)); }
+    const bx = c.x - bw / 2, by = pkY - 20 - bh;
+    ctx.fillStyle = flash ? C.warn : C.butter; rr(bx, by, bw, bh, Math.min(8, bw / 3, bh / 2)); ctx.fill();
+    if (!melt) { ctx.fillStyle = flash ? C.warnTop : C.butterTop; rr(bx, by, bw, bh * 0.3, Math.min(8, bw / 3, bh * 0.15)); ctx.fill(); }
+    // seconds sticker
+    const secs = String(Math.max(0, Math.ceil(S.clock))), tw = 46;
+    ctx.fillStyle = C.ink; rr(c.x - tw / 2 + 3, pkY + 7, tw, 24, 6); ctx.fill();
+    ctx.fillStyle = low ? C.warn : C.butter; rr(c.x - tw / 2, pkY + 4, tw, 24, 6); ctx.fill();
+    text(secs, c.x, pkY + 23, 18, C.ink);
+  }
+  function drawHud() {
+    drawClock();
+    const r = W - 16;
+    text('SCORE', r, safeTop + 26, 12, C.cream, 'right');
+    text(fmt(S.shown), r, safeTop + 56, 28, C.cream, 'right', C.ink);
+    if (S.combo >= 2 && S.time - S.lastServe < 3 && S.mode === 'play') {
+      const a = clamp((S.time - S.lastServe) / 0.12, 0, 1), sc = 1.25 - 0.25 * a, w = 92, x = r - w, y = safeTop + 68;
+      ctx.save(); ctx.translate(x + w / 2, y + 12); ctx.rotate(-0.06); ctx.scale(sc, sc);
+      ctx.fillStyle = C.ink; rr(-w / 2 + 3, -12 + 3, w, 24, 6); ctx.fill();
+      ctx.fillStyle = C.butter; rr(-w / 2, -12, w, 24, 6); ctx.fill();
+      text('×' + S.combo + ' RUSH', 0, 6, 14, C.accent);
+      ctx.restore();
+    }
+    text('GRIDDLE ' + S.griddle, 16, safeTop + 86, 16, C.cream, 'left', C.ink);
+    text('BEST ' + fmt(kit.best()), 16, safeTop + 106, 12, C.cream, 'left');
+  }
+  function drawStrip() {
+    const y = L.stripTop;
+    ctx.fillStyle = C.strip; ctx.fillRect(0, y, W, H - y);
+    ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(0, y, W, 2);
+    const my = L.stripMid, maxT = Math.max(1, Math.min(12, Math.floor((W - 32 - 56 - 34) / 22)));
+    if (!tokens.length && S.griddle <= 2 && S.mode !== 'title') {
+      text('Tap a stack, then a plate to move.', 16, my - 4, 13, C.cream, 'left');
+      text('Swipe up on a pancake to flip.', 16, my + 14, 13, C.cream, 'left');
+    }
+    const shown = tokens.slice(0, maxT);
+    shown.forEach((f, i) => {
+      const tx = 16 + i * 22 + 9, ty = my + 9;
+      for (let k = 0; k < 3; k++) { ctx.fillStyle = FL[f].r; rr(tx - 9, ty - 6 - k * 5, 18, 6, 3); ctx.fill(); ctx.fillStyle = FL[f].b; rr(tx - 9, ty - 6 - k * 5, 18, 4.5, 3); ctx.fill(); }
+      ctx.fillStyle = C.syrup; rr(tx - 9, ty - 16, 18, 3, 1.5); ctx.fill();
+      ctx.fillStyle = C.butter; ctx.fillRect(tx - 3, ty - 21, 6, 5);
+    });
+    if (tokens.length > maxT) text('+' + (tokens.length - maxT), 16 + maxT * 22 + 4, my + 6, 15, C.cream, 'left');
+    if (S.mode === 'play') {
+      const bx = W - 16 - 38, by = my - 19;
+      ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(bx + 19, by + 19, 19, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = C.cream; ctx.fillRect(bx + 13, by + 12, 4, 14); ctx.fillRect(bx + 21, by + 12, 4, 14);
+      buttons.push({ x: bx - 6, y: by - 6, w: 50, h: 50, go: () => { if (S.mode === 'play') { S.mode = 'paused'; G = null; } } });
+    }
+  }
+  function drawStamps() {
+    for (const s of stamps) {
+      const a = s.t < 0.12 ? s.t / 0.12 : 1, fade = clamp((s.life - s.t) / 0.25, 0, 1);
+      const sc = 1.3 - 0.3 * easeOut(a);
+      ctx.save(); ctx.globalAlpha = fade; ctx.translate(W / 2, s.y); ctx.rotate(s.rot || -0.05); ctx.scale(sc, sc);
+      ctx.font = '700 24px ' + FONT;
+      const w = Math.min(W - 40, Math.max(ctx.measureText(s.txt).width + 44 + (s.icon ? 40 : 0), 180)), h = s.sub ? 62 : 44;
+      panel(-w / 2, -h / 2, w, h);
+      const tx = s.icon ? 16 : 0;
+      if (s.icon) { ctx.save(); ctx.translate(-w / 2 + 16, -6); ctx.rotate(-0.4); ctx.fillStyle = C.ink; rr(0, 0, 22, 9, 2); ctx.fill(); ctx.fillStyle = C.wall; ctx.fillRect(5, 3, 4, 3); ctx.fillRect(12, 3, 4, 3); ctx.fillStyle = C.ink; ctx.fillRect(21, 3, 18, 4); ctx.restore(); }
+      text(s.txt, tx, s.sub ? -2 : 8, 24, C.ink);
+      if (s.sub) text(s.sub, tx, 20, 13, C.ink);
+      ctx.restore();
+    }
+  }
+
+  function drawTitle() {
+    const ty = Math.max(safeTop + 90, H * 0.22), size = Math.min(48, (W - 32) / 8);
+    text('GRIDDLEWISE', W / 2, ty, size, C.cream, 'center', C.ink);
+    text('Sort the stacks. Flip with the spatula.', W / 2, ty + 34, 14, C.cream);
+    text('Beat the breakfast rush.', W / 2, ty + 54, 14, C.cream);
+    // a little griddle with one live stack
+    const gw = 200, gh = 5 * TP.step + 64, gx = W / 2 - gw / 2, gy = TP.y - gh + 26;
+    ctx.fillStyle = C.shadow; rr(gx + 6, gy + 6, gw, gh, 18); ctx.fill();
+    ctx.fillStyle = C.slab; rr(gx, gy, gw, gh, 18); ctx.fill();
+    ctx.fillStyle = C.lip; ctx.fillRect(gx + 10, gy + gh - 10, gw - 20, 6);
+    drawPlate(TP, 0, 0);
+    drawAnims();
+    // butter card
+    const cy = TP.y + 56, w = Math.min(320, W - 48), x = (W - w) / 2, h = 158;
+    panel(x, cy, w, h);
+    ctx.globalAlpha = 0.65 + 0.35 * Math.sin(S.time * 4);
+    text('TAP TO START', W / 2, cy + 40, 26, C.ink); ctx.globalAlpha = 1;
+    text('Tap a stack, then a plate to move it.', W / 2, cy + 70, 13, C.ink);
+    text('Swipe up on a pancake to flip.', W / 2, cy + 90, 13, C.ink);
+    ctx.fillStyle = C.ink; ctx.fillRect(x + 24, cy + 106, w - 48, 2);
+    text('BEST ' + fmt(kit.best()) + '  ·  GRIDDLE ' + Math.max(1, bestGriddle()), W / 2, cy + 136, 16, C.ink);
+  }
+  function drawOver() {
+    const k = clamp((S.t - 0.35) / 0.25, 0, 1); if (k <= 0) return;
+    const w = Math.min(320, W - 48), h = 292, x = (W - w) / 2, y = Math.max(L.slabTop + 20, H * 0.5 - h / 2 - 30) + (1 - easeOutBack(k)) * 60;
+    ctx.save(); ctx.globalAlpha = k;
+    panel(x, y, w, h);
+    text('OUT OF BUTTER', W / 2, y + 46, 28, C.ink);
+    text('SCORE', W / 2, y + 82, 13, C.ink);
+    text(fmt(S.score), W / 2, y + 126, 44, C.ink);
+    if (S.newBest && S.score > 0) {
+      ctx.save(); ctx.translate(x + w - 52, y + 98); ctx.rotate(0.18);
+      ctx.fillStyle = C.accent; rr(-38, -14, 76, 28, 6); ctx.fill(); text('NEW BEST', 0, 5, 13, C.cream); ctx.restore();
+    }
+    text('BEST ' + fmt(kit.best()), W / 2, y + 154, 16, C.ink);
+    ctx.fillStyle = C.ink; ctx.fillRect(x + 24, y + 170, w - 48, 2);
+    text('Griddles cleared', x + 26, y + 196, 14, C.ink, 'left'); text(String(S.cleared), x + w - 26, y + 196, 16, C.ink, 'right');
+    text('Stacks served', x + 26, y + 220, 14, C.ink, 'left'); text(String(S.served), x + w - 26, y + 220, 16, C.ink, 'right');
+    if (S.t > 0.6) pill('NEW RUSH', W / 2 - 80, y + h - 56, 160, 40, () => startRush());
+    ctx.restore();
+  }
+  function drawPaused() {
+    ctx.fillStyle = 'rgba(20,20,24,.35)'; ctx.fillRect(0, 0, W, H);
+    const w = Math.min(300, W - 48), h = 150, x = (W - w) / 2, y = H * 0.4 - h / 2;
+    panel(x, y, w, h);
+    text('PAUSED', W / 2, y + 56, 30, C.ink);
+    text('Tap to carry on', W / 2, y + 96, 15, C.ink);
+    text('The butter waits for you.', W / 2, y + 120, 12, C.ink);
+  }
+
+  function draw() {
+    buttons = [];
+    ctx.save();
+    if (S.shake > 0) ctx.translate((Math.random() - 0.5) * S.shake, (Math.random() - 0.5) * S.shake);
+    drawTiles();
+    if (S.mode === 'title') {
+      drawTitle();
+    } else {
+      drawSlab();
+      const tr = S.trans;
+      if (tr && (tr.phase === 'out' || tr.phase === 'in')) {
+        ctx.save(); ctx.beginPath(); ctx.rect(0, L.slabTop, W, L.slabBot - 12 - L.slabTop); ctx.clip();
+        plates.forEach((pl, j) => {
+          let oy = 0;
+          if (tr.phase === 'out') oy = easeIn(clamp((tr.t - j * 0.06) / 0.3, 0, 1)) * (L.slabBot - pl.rowTop + 30);
+          else oy = -(1 - easeOutBack(clamp((tr.t - j * 0.05) / 0.3, 0, 1))) * (pl.y - L.slabTop + 30);
+          drawPlate(pl, 0, oy);
+        });
+        ctx.restore();
+      } else {
+        for (const pl of plates) drawPlate(pl, 0, 0);
+        drawAnims();
+      }
+      if (S.mode === 'over') {
+        ctx.fillStyle = 'rgba(0,0,0,' + (0.35 * clamp(S.t / 0.4, 0, 1)) + ')';
+        slabPath(L.slabX, L.slabTop, L.slabW, L.slabBot - L.slabTop, 18); ctx.fill();
+      }
+      drawHud();
+    }
+    for (const p of parts) {
+      ctx.globalAlpha = clamp(p.life / 0.4, 0, 1); ctx.fillStyle = p.col;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s); ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    for (const f of floats) {
+      ctx.globalAlpha = clamp((f.life - f.t) / 0.3, 0, 1);
+      text(f.txt, f.x, f.y - 34 * easeOut(f.t / f.life), f.size, f.col, 'center', C.ink);
+    }
+    ctx.globalAlpha = 1;
+    if (S.mode !== 'title') { drawStamps(); drawStrip(); }
+    ctx.restore();
+    if (S.mode === 'over') drawOver();
+    if (S.mode === 'paused') drawPaused();
+  }
+
+  // ---------- loop ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
+    if (S.mode !== 'paused') update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // test hook used by scripts/playtest.mjs and scripts/shoot.mjs
+  window.__game = {
+    state: () => ({ mode: S.mode, score: S.score, griddle: S.griddle, clock: Math.round(S.clock * 10) / 10, served: S.served, cleared: S.cleared }),
+    demo: (on) => { S.demo = !!on; S.demoT = 0; },
+    plates: () => plates.map((pl) => pl.p.join('')).join('|'),
+    dbg: () => ({ plan: S.plan ? S.plan.length : -1, match: orderedKey(plates.map((pl) => pl.p)) === S.planKey, cool: S.solveCool, anims: anims.length, trans: S.trans && S.trans.phase, sel: !!S.sel, demoT: S.demoT, plates: plates.map((pl) => pl.p.join('') + (pl.served ? '*' : '')).join('|') }),
+    debugPlates: () => plates.map((pl) => ({ x: Math.round(pl.x), y: Math.round(pl.y), step: Math.round(pl.step), n: pl.p.length, served: pl.served })),
+    solveCheck: (n) => { const out = []; for (let g = 1; g <= (n || 12); g++) { const s = spec(g); const t0 = performance.now(); const d = makeDeal(s.N, s.H, s.E); out.push({ g, ok: !!d.plan, steps: d.plan ? d.plan.length : 0, ms: Math.round(performance.now() - t0) }); } return out; }
+  };
+})();
+</script>
+</body>
+</html>

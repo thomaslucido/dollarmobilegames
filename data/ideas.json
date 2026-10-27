@@ -28,5 +28,15 @@
         "slug": "wheelthrown",
         "status": "built",
         "why": "QA passed"
+    },
+    {
+        "date": "2026-10-26",
+        "trend": "sort puzzles",
+        "evidence": "Mobidictum: sort puzzle passed blast as third-largest puzzle subgenre by IAP revenue at start of 2026; PocketGamer.biz H1 2026 puzzle revenue +20% YoY. No chart snapshots in data/trends yet.",
+        "concept": "Pancake stacks sorted by flavour; swipe a spatula up to flip part of a stack (reverses order, costs 1s) against a melting butter clock",
+        "name": "Griddlewise",
+        "slug": "griddlewise",
+        "status": "built",
+        "why": "QA passed"
     }
 ]

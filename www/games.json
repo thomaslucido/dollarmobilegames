@@ -39,5 +39,15 @@
     "added": "2026-10-24",
     "accent": "#b8532e",
     "status": "queued"
+  },
+  {
+    "slug": "griddlewise",
+    "name": "Griddlewise",
+    "tagline": "Sort the stacks. Flip with the spatula. Beat the rush.",
+    "genre": "pancake flip sort puzzle",
+    "bundleId": "com.thomaslucido.griddlewise",
+    "added": "2026-10-26",
+    "accent": "#1f4fbf",
+    "status": "built"
   }
 ]

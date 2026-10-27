@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#1d46a8"/>
+  <g stroke="#ffffff" stroke-opacity=".13" stroke-width="5">
+    <path d="M64 0V512M128 0V512M192 0V512M256 0V512M320 0V512M384 0V512M448 0V512"/>
+    <path d="M0 64H512M0 128H512M0 192H512M0 256H512M0 320H512M0 384H512M0 448H512"/>
+  </g>
+  <rect x="0" y="430" width="512" height="82" fill="#26262b"/>
+  <rect x="0" y="430" width="512" height="10" fill="#3a3a40"/>
+  <ellipse cx="256" cy="430" rx="190" ry="30" fill="#141417" opacity=".55"/>
+  <ellipse cx="256" cy="418" rx="184" ry="32" fill="#f7f4ec"/>
+  <ellipse cx="256" cy="418" rx="184" ry="32" fill="none" stroke="#1d46a8" stroke-width="7"/>
+  <ellipse cx="256" cy="414" rx="130" ry="16" fill="#e4dfd2"/>
+  <!-- bottom: red velvet with cream crumbs -->
+  <rect x="106" y="346" width="300" height="62" rx="20" fill="#962230"/>
+  <rect x="106" y="346" width="300" height="50" rx="18" fill="#c9303c"/>
+  <g fill="#fff3e0"><circle cx="152" cy="372" r="6"/><circle cx="204" cy="364" r="6"/><circle cx="256" cy="376" r="6"/><circle cx="308" cy="364" r="6"/><circle cx="360" cy="372" r="6"/></g>
+  <!-- strawberry with seed ticks -->
+  <rect x="112" y="288" width="288" height="62" rx="20" fill="#d06a8e"/>
+  <rect x="112" y="288" width="288" height="50" rx="18" fill="#f48fb1"/>
+  <g fill="#fff3c4"><rect x="150" y="306" width="6" height="13" rx="3"/><rect x="196" y="316" width="6" height="13" rx="3"/><rect x="244" y="304" width="6" height="13" rx="3"/><rect x="292" y="316" width="6" height="13" rx="3"/><rect x="340" y="306" width="6" height="13" rx="3"/></g>
+  <!-- matcha with swirl -->
+  <rect x="104" y="230" width="304" height="62" rx="20" fill="#64a046"/>
+  <rect x="104" y="230" width="304" height="50" rx="18" fill="#8bc46a"/>
+  <path d="M146 258Q186 244 226 258T306 258T370 256" fill="none" stroke="#5a9440" stroke-width="7" stroke-linecap="round"/>
+  <!-- motion arcs -->
+  <g fill="none" stroke="#fff8e7" stroke-width="11" stroke-linecap="round">
+    <path d="M70 200Q58 124 118 80"/>
+    <path d="M100 214Q96 168 126 140" opacity=".6"/>
+  </g>
+  <!-- flipping pancake: buttermilk with a butter pat, spatula under it -->
+  <g transform="rotate(-17 256 150)">
+    <rect x="114" y="122" width="284" height="62" rx="20" fill="#c98a2e"/>
+    <rect x="114" y="122" width="284" height="50" rx="18" fill="#f0b04a"/>
+    <rect x="146" y="132" width="180" height="8" rx="4" fill="#ffd98a"/>
+    <rect x="220" y="92" width="70" height="38" rx="8" fill="#ffd23f"/>
+    <rect x="220" y="92" width="70" height="11" rx="5.5" fill="#fff0a0"/>
+    <rect x="200" y="190" width="180" height="20" rx="8" fill="#26262b"/>
+    <rect x="228" y="196" width="36" height="8" rx="4" fill="#1d46a8"/>
+    <rect x="280" y="196" width="36" height="8" rx="4" fill="#1d46a8"/>
+    <path d="M376 200H444" stroke="#26262b" stroke-width="16" stroke-linecap="round"/>
+    <path d="M444 200H600" stroke="#ffd23f" stroke-width="30" stroke-linecap="round"/>
+  </g>
+</svg>
