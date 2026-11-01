@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ece5d4"/>
+      <stop offset="1" stop-color="#d6c9ae"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".38"/>
+      <stop offset=".55" stop-color="#ffffff" stop-opacity=".06"/>
+      <stop offset="1" stop-color="#000000" stop-opacity=".12"/>
+    </linearGradient>
+    <radialGradient id="sun">
+      <stop offset="0" stop-color="#fff6cf"/>
+      <stop offset=".55" stop-color="#ffd45e"/>
+      <stop offset="1" stop-color="#f0b43a"/>
+    </radialGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#fff3c2" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#fff3c2" stop-opacity="0"/>
+    </radialGradient>
+    <path id="arch" d="M136 456V236Q136 128 256 52Q376 128 376 236V456Z"/>
+    <clipPath id="clip"><use href="#arch"/></clipPath>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#wall)"/>
+  <g stroke="#cbbd9f" stroke-width="3" opacity=".7">
+    <path d="M0 120H96M416 120H512M0 250H100M412 250H512M0 380H100M412 380H512"/>
+    <path d="M52 0V120M470 120V250M40 250V380M460 380V512M60 380V512"/>
+  </g>
+
+  <!-- light falling into the room -->
+  <path d="M150 300L20 512H230L330 300Z" fill="#fff6d6" opacity=".35"/>
+
+  <!-- carved stone reveal -->
+  <path d="M110 476V232Q110 112 256 22Q402 112 402 232V476Z" fill="#c7b898"/>
+  <path d="M120 466V234Q120 120 256 36Q392 120 392 234V466Z" fill="#a8987a"/>
+
+  <!-- glass -->
+  <g clip-path="url(#clip)">
+    <rect x="136" y="40" width="240" height="420" fill="#f4eee0"/>
+    <!-- row 0 (tip) -->
+    <rect x="136" y="40" width="240" height="86" fill="#7a3fc2"/>
+    <!-- row 1 -->
+    <rect x="136" y="126" width="60" height="66" fill="#1f58c9"/>
+    <rect x="196" y="126" width="60" height="66" fill="url(#sun)"/>
+    <rect x="256" y="126" width="60" height="66" fill="#c8203f"/>
+    <rect x="316" y="126" width="60" height="66" fill="#1f58c9"/>
+    <!-- row 2 -->
+    <rect x="136" y="192" width="60" height="66" fill="#c8203f"/>
+    <rect x="196" y="192" width="60" height="66" fill="#13916a"/>
+    <rect x="256" y="192" width="60" height="66" fill="#13916a"/>
+    <!-- row 3 -->
+    <rect x="136" y="258" width="60" height="66" fill="#1f58c9"/>
+    <rect x="196" y="258" width="60" height="66" fill="#1f58c9"/>
+    <!-- row 4 -->
+    <rect x="136" y="324" width="60" height="66" fill="#13916a"/>
+    <rect x="196" y="324" width="60" height="66" fill="#c8203f"/>
+    <rect x="256" y="324" width="60" height="66" fill="#c8203f"/>
+    <rect x="316" y="324" width="60" height="66" fill="#e89c1f"/>
+    <!-- row 5 -->
+    <rect x="136" y="390" width="60" height="66" fill="#e89c1f"/>
+    <rect x="196" y="390" width="60" height="66" fill="#13916a"/>
+    <rect x="256" y="390" width="60" height="66" fill="#1f58c9"/>
+    <rect x="316" y="390" width="60" height="66" fill="#13916a"/>
+    <!-- empty slots waiting for the piece -->
+    <g fill="none" stroke="#e1d6bf" stroke-width="4">
+      <path d="M262 270L304 312M282 262L312 292M262 290L292 320M322 204L364 246M342 196L372 226M322 224L352 254M322 270L364 312M342 262L372 292M322 290L352 320"/>
+    </g>
+    <circle cx="226" cy="159" r="70" fill="url(#glow)"/>
+    <rect x="136" y="40" width="240" height="420" fill="url(#sheen)"/>
+    <!-- seed bubbles -->
+    <g fill="#ffffff" opacity=".35">
+      <circle cx="154" cy="140" r="3"/><circle cx="292" cy="146" r="2.5"/><circle cx="160" cy="214" r="3"/>
+      <circle cx="232" cy="236" r="2.5"/><circle cx="220" cy="280" r="3"/><circle cx="276" cy="346" r="2.5"/>
+      <circle cx="160" cy="410" r="3"/><circle cx="350" cy="420" r="2.5"/><circle cx="246" cy="96" r="3"/>
+    </g>
+    <!-- lead came -->
+    <g stroke="#24212b" stroke-width="9" stroke-linecap="round">
+      <path d="M196 126V456M256 52V456M316 126V456"/>
+      <path d="M136 126H376M136 192H376M136 258H376M136 324H376M136 390H376"/>
+    </g>
+  </g>
+  <use href="#arch" fill="none" stroke="#24212b" stroke-width="14" stroke-linejoin="round"/>
+
+  <!-- sill -->
+  <rect x="100" y="456" width="312" height="26" rx="4" fill="#b9a988"/>
+  <rect x="100" y="456" width="312" height="7" fill="#d4c6a8"/>
+
+  <!-- amber L pane being placed (lands on the empty slots) -->
+  <g transform="translate(18 -22)">
+    <path d="M262 264H382V336H262Z M322 192H382V264H322Z" fill="#24212b" opacity=".22" transform="translate(2 4)"/>
+    <path d="M256 258H376V324H256Z" fill="#e89c1f"/>
+    <path d="M316 192H376V258H316Z" fill="#e89c1f"/>
+    <path d="M256 258H376V324H256Z M316 192H376V258H316Z" fill="url(#sheen)"/>
+    <g fill="none" stroke="#24212b" stroke-width="9" stroke-linejoin="round">
+      <path d="M256 258H316V192H376V324H256Z"/>
+      <path d="M316 258V324M316 258H376"/>
+    </g>
+    <circle cx="283" cy="280" r="3" fill="#ffffff" opacity=".4"/>
+  </g>
+</svg>

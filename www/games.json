@@ -49,5 +49,15 @@
     "added": "2026-10-26",
     "accent": "#1f4fbf",
     "status": "built"
+  },
+  {
+    "slug": "glasswright",
+    "name": "Glasswright",
+    "tagline": "Draft your panes. Fill the window. Let the light in.",
+    "genre": "roguelike block puzzle",
+    "bundleId": "com.thomaslucido.glasswright",
+    "added": "2026-10-31",
+    "accent": "#c8203f",
+    "status": "built"
   }
 ]

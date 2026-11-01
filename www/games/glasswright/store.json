@@ -1,0 +1,9 @@
+{
+  "appName": "Glasswright",
+  "subtitle": "Roguelike stained glass puzzle",
+  "description": "Glasswright is a block puzzle about making stained glass windows. Drag panes of coloured glass into an arched window and fill a whole row or column to set it and let the light in. Each window has a light target to reach in 12 placements.\n\nThe twist: the panes come from a deck you build. You start with twelve simple panes in ruby, sapphire, emerald and amber. After each window you visit the workshop to add a new shape, take a special sun or crystal pane, or throw out a card you don't want. Every few windows you also choose a tracery, a lasting boon for the rest of the run.\n\nColour matters. A line of one colour shines three times as bright, and a line of two colours twice as bright. Clear several lines at once and the light multiplies again. Tap any pane to turn it before you drop it in.\n\nThe windows change as you go: a tall pointed lancet, a twin lancet and a round rose window, with old frosted glass in the way and higher targets each time. Run out of placements before the window is lit and the run is over. Go as deep as you can and beat your best.\n\nEvery colour also has its own etched mark, so you can play without telling colours apart.\n\nPlays offline. No ads. No tracking. No in-app purchases.",
+  "keywords": "window,cathedral,blocks,deckbuilder,cards,draft,grid,lines,mosaic,jewel,rose,chapel,run,offline",
+  "promo": "Build your own deck of glass panes, fit them into arched windows and clear lines of one colour to fill the room with light.",
+  "category": "GAMES_PUZZLE",
+  "reviewNote": "Tap to begin. Drag a glass pane from the tray into the window (tap a pane to rotate it) and fill a full row or column to clear it and earn light. Reach the window's light target within 12 placements, then pick a new pane in the workshop. The run ends if you run out of placements first."
+}

@@ -1,0 +1,1326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Glasswright</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#e9e1d0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../../shared/game-kit.js"></script>
+<script>
+(function () {
+  'use strict';
+  const kit = GameKit.init({ slug: 'glasswright', backColor: '#f4eee0' });
+  const cv = document.getElementById('c');
+  const SERIF = '"Iowan Old Style", Palatino, "Palatino Linotype", ui-serif, Georgia, serif';
+  const LEAD = '#24212b', INK = '#2a2530', MUTED = '#6d6457', RUBY = '#c8203f', GOLD = '#ffd45e', GLOW = '#fff3c2';
+  const STONE = '#c7b898', STONE_SH = '#a8987a', LIME = '#f4eee0';
+  let W = 390, H = 844, DPR = 1, ctx = null, T = 0;
+
+  // ---------- small helpers ----------
+  const ri = (n) => Math.floor(Math.random() * n);
+  const pick = (a) => a[ri(a.length)];
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeOut = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+  const easeBack = (t) => { t = clamp(t, 0, 1); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = ri(i + 1); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function roman(n) { const m = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]; let s = ''; for (const [v, r] of m) while (n >= v) { s += r; n -= v; } return s; }
+  const fmt = (n) => Math.round(n).toLocaleString('en-US');
+  const hexRgb = (h) => { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+  const mix = (a, b, t) => { const A = hexRgb(a), B = hexRgb(b); return 'rgb(' + A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',') + ')'; };
+  const rgba = (h, a) => 'rgba(' + hexRgb(h).join(',') + ',' + a + ')';
+  function seeded(s) { return function () { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const inRect = (p, r) => r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+
+  // ---------- glass ----------
+  const GLASS = {
+    ruby: { base: '#c8203f', name: 'Ruby', mark: 'diamond' },
+    sapphire: { base: '#1f58c9', name: 'Sapphire', mark: 'ring' },
+    emerald: { base: '#13916a', name: 'Emerald', mark: 'leaf' },
+    amber: { base: '#e89c1f', name: 'Amber', mark: 'dot', darkMark: true },
+    amethyst: { base: '#7a3fc2', name: 'Amethyst', mark: 'cross' },
+    sun: { base: '#ffd45e', name: 'Sun', wild: true },
+    crystal: { base: '#e8f4f6', name: 'Crystal', wild: true },
+    grey: { base: '#9c9a94', name: 'Old glass' }
+  };
+  const PANE_COLORS = ['ruby', 'sapphire', 'emerald', 'amber', 'amethyst'];
+
+  // ---------- shapes and cards ----------
+  const SHAPES = {
+    mono: [[0, 0]], i2: [[0, 0], [1, 0]], i3: [[0, 0], [1, 0], [2, 0]], l3: [[0, 0], [0, 1], [1, 1]],
+    o4: [[0, 0], [1, 0], [0, 1], [1, 1]], i4: [[0, 0], [1, 0], [2, 0], [3, 0]], l4: [[0, 0], [0, 1], [0, 2], [1, 2]],
+    j4: [[1, 0], [1, 1], [1, 2], [0, 2]], t4: [[0, 0], [1, 0], [2, 0], [1, 1]], s4: [[1, 0], [2, 0], [0, 1], [1, 1]],
+    z4: [[0, 0], [1, 0], [1, 1], [2, 1]], i5: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]], v5: [[0, 0], [0, 1], [0, 2], [1, 2], [2, 2]],
+    p5: [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2]], u5: [[0, 0], [2, 0], [0, 1], [1, 1], [2, 1]], plus: [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]]
+  };
+  const SHAPE_NAME = { mono: 'single', i2: 'pair', i3: 'bar', l3: 'corner', o4: 'square', i4: 'long bar', l4: 'L', j4: 'J', t4: 'T', s4: 'S', z4: 'Z', i5: 'great bar', v5: 'wide corner', p5: 'P', u5: 'U', plus: 'cross' };
+  const WEIGHTS = [['mono', 2], ['i2', 2], ['i3', 3], ['l3', 3], ['o4', 2], ['i4', 2], ['l4', 2], ['j4', 2], ['t4', 2], ['s4', 2], ['z4', 2], ['i5', 1], ['v5', 1], ['p5', 1], ['u5', 1], ['plus', 1]];
+  const START = [['i2', 'ruby'], ['i2', 'sapphire'], ['i3', 'emerald'], ['i3', 'amber'], ['l3', 'ruby'], ['l3', 'sapphire'], ['o4', 'emerald'], ['o4', 'amber'], ['i4', 'ruby'], ['l4', 'sapphire'], ['t4', 'emerald'], ['s4', 'amber']];
+
+  let cardId = 0;
+  function makeCard(shape, color, special) {
+    return { id: ++cardId, shape, color, special: special || null, cells: SHAPES[shape].map(([x, y]) => ({ x, y, c: color })), spin: 0, wig: 0, appear: 1 };
+  }
+  const sunCard = () => makeCard('mono', 'sun', 'sun');
+  const crystalCard = () => makeCard('i2', 'crystal', 'crystal');
+  function gildedCard() { const k = makeCard(pick(['i3', 'l3', 'o4', 'i4', 'l4', 'j4', 't4', 's4', 'z4']), pick(PANE_COLORS), 'gilded'); k.cells[ri(k.cells.length)].c = 'sun'; return k; }
+  function weightedShape() { const tot = WEIGHTS.reduce((a, w) => a + w[1], 0); let x = Math.random() * tot; for (const [k, w] of WEIGHTS) { x -= w; if (x < 0) return k; } return 'i2'; }
+  const newSpecial = () => [sunCard, crystalCard, gildedCard][ri(3)]();
+  const newPane = () => (Math.random() < 0.15 ? newSpecial() : makeCard(weightedShape(), pick(PANE_COLORS)));
+  function cardName(k) {
+    if (k.special === 'sun') return 'Sun pane';
+    if (k.special === 'crystal') return 'Crystal pane';
+    if (k.special === 'gilded') return 'Gilded ' + SHAPE_NAME[k.shape];
+    return GLASS[k.color].name + ' ' + SHAPE_NAME[k.shape];
+  }
+  function cardDesc(k) {
+    if (k.special === 'sun') return 'Wild colour. Lines through it shine x2';
+    if (k.special === 'crystal') return 'Two clear cells that match any colour';
+    if (k.special === 'gilded') return GLASS[k.color].name + ' with a sun cell: its lines x2';
+    return k.cells.length + (k.cells.length === 1 ? ' cell' : ' cells') + ' of ' + GLASS[k.color].name.toLowerCase() + ' glass';
+  }
+
+  const norm = (cells) => { let mx = 99, my = 99; for (const q of cells) { mx = Math.min(mx, q.x); my = Math.min(my, q.y); } return cells.map((q) => ({ x: q.x - mx, y: q.y - my, c: q.c })); };
+  const rotCW = (cells) => { let h = 0; for (const q of cells) h = Math.max(h, q.y + 1); return norm(cells.map((q) => ({ x: h - 1 - q.y, y: q.x, c: q.c }))); };
+  const sig = (cells) => cells.map((q) => q.x + ',' + q.y + q.c).sort().join(';');
+  const bbox = (cells) => { let w = 0, h = 0; for (const q of cells) { w = Math.max(w, q.x + 1); h = Math.max(h, q.y + 1); } return { w, h }; };
+  function rotations(cells) { const out = [], seen = new Set(); let c = cells; for (let k = 0; k < 4; k++) { const s = sig(c); if (!seen.has(s)) { seen.add(s); out.push(c); } c = rotCW(c); } return out; }
+
+  // ---------- windows ----------
+  const WINDOWS = [
+    { name: 'Lancet', kind: 'lancet', cols: 7, rows: 9, ext: [0, -0.78, 7, 9], mask: (r, c) => (r === 0 ? c >= 2 && c <= 4 : r === 1 ? c >= 1 && c <= 5 : true) },
+    { name: 'Twin Lancet', kind: 'twin', cols: 8, rows: 8, ext: [0, -0.62, 8, 8], mask: (r, c) => (r === 0 ? c === 1 || c === 2 || c === 5 || c === 6 : true) },
+    { name: 'Rose', kind: 'rose', cols: 9, rows: 9, ext: [-0.66, -0.66, 9.66, 9.66], mask: (r, c) => ((r === 0 || r === 8) ? c >= 3 && c <= 5 : (r === 1 || r === 7) ? c >= 1 && c <= 7 : true) }
+  ];
+  const TRACERIES = [
+    { id: 'came', name: 'Extra Came', desc: '+2 cuts every window', col: '#13916a' },
+    { id: 'rose', name: 'Rose Tracery', desc: '+1 sweep every window', col: '#c8203f' },
+    { id: 'prism', name: 'Prism', desc: 'Two-tone lines shine as pure', col: '#7a3fc2' },
+    { id: 'eye', name: "Old Master's Eye", desc: 'Old glass matches any colour', col: '#9c9a94' },
+    { id: 'steady', name: 'Steady Hand', desc: 'Keep 4 panes on the bench', col: '#1f58c9' },
+    { id: 'tall', name: 'Tall Lancet', desc: 'Column clears shine x1.5', col: '#e89c1f' },
+    { id: 'kiln', name: 'Kiln Mark', desc: 'First line each window x3', col: '#ffd45e' }
+  ];
+
+  // ---------- state ----------
+  const S = {
+    mode: 'title', phase: 'board', t: 0, pt: 0, ot: 0, ct: 0,
+    n: 1, total: 0, light: 0, lightShown: 0, target: 160, cuts: 12, cutsMax: 12, sweeps: 1, sweepsMax: 1, handSize: 3,
+    deck: [], draw: [], discard: [], hand: [], sel: 0, owned: new Set(), kilnUsed: false,
+    shapeIdx: 0, lines: [], ghost: null, sheet: false, jamHint: false, banner: 0,
+    offers: [], chosen: -1, bonus: 0, cause: '', demo: false, demoT: 0, dm: null,
+    shake: 0, rays: null, meterGlow: 0, shuffleT: 0, newBest: false, firstRun: false, hintStep: -1, hintT: 0, placed: 0
+  };
+  let board = [], drag = null, ret = null, titleQ = [], titleIdx = 0;
+  let motes = [], parts = [], pops = [], clears = [], beams = [];
+  const has = (id) => S.owned.has(id);
+  let hintsDone = !!kit.get('hints', false);
+  function getBW() { try { return parseInt(localStorage.getItem('glasswright.bestWindow') || '0', 10) || 0; } catch (e) { return 0; } }
+  function setBW(n) { try { if (n > getBW()) localStorage.setItem('glasswright.bestWindow', String(n)); } catch (e) {} }
+
+  // ---------- board ----------
+  const ROWS = () => board.length, COLS = () => (board[0] ? board[0].length : 0);
+  function buildBoard(idx) {
+    const wd = WINDOWS[idx]; S.shapeIdx = idx; board = [];
+    for (let r = 0; r < wd.rows; r++) { const row = []; for (let c = 0; c < wd.cols; c++) row.push(wd.mask(r, c) ? null : undefined); board.push(row); }
+    S.lines = [];
+    for (let r = 0; r < wd.rows; r++) { const cells = []; for (let c = 0; c < wd.cols; c++) if (board[r][c] !== undefined) cells.push([r, c]); if (cells.length) S.lines.push({ cells, col: false }); }
+    for (let c = 0; c < wd.cols; c++) { const cells = []; for (let r = 0; r < wd.rows; r++) if (board[r][c] !== undefined) cells.push([r, c]); if (cells.length) S.lines.push({ cells, col: true }); }
+  }
+  function fits(cells, ax, ay) {
+    const R = ROWS(), C = COLS();
+    for (const q of cells) { const r = ay + q.y, c = ax + q.x; if (r < 0 || c < 0 || r >= R || c >= C || board[r][c] !== null) return false; }
+    return true;
+  }
+  const full = (l) => { for (const [r, c] of l.cells) if (!board[r][c]) return false; return true; };
+  function placeOld(k) {
+    const R = ROWS(), C = COLS(), rc = new Array(R).fill(0), cc = new Array(C).fill(0);
+    const rl = [], cl = [];
+    for (let r = 0; r < R; r++) rl.push(board[r].filter((v) => v !== undefined).length);
+    for (let c = 0; c < C; c++) { let n = 0; for (let r = 0; r < R; r++) if (board[r][c] !== undefined) n++; cl.push(n); }
+    let placed = 0, tries = 0;
+    while (placed < k && tries++ < 2000) {
+      const r = ri(R), c = ri(C);
+      if (board[r][c] !== null || rc[r] >= 2 || cc[c] >= 2) continue;
+      if (rc[r] + 1 > rl[r] * 0.25 || cc[c] + 1 > cl[c] * 0.25) continue;
+      board[r][c] = { c: 'grey', v: ri(3), pop: -9 }; rc[r]++; cc[c]++; placed++;
+    }
+  }
+  function lineScore(l) {
+    const set = new Set(); let suns = 0;
+    for (const [r, c] of l.cells) {
+      const k = board[r][c].c;
+      if (k === 'sun') { suns++; continue; }
+      if (k === 'crystal' || (k === 'grey' && has('eye'))) continue;
+      set.add(k);
+    }
+    const n = set.size;
+    const mult = n <= 1 ? 3 : n === 2 ? (has('prism') ? 3 : 2) : 1;
+    let pts = 10 * l.cells.length * mult * Math.pow(2, suns);
+    if (l.col && has('tall')) pts *= 1.5;
+    return { pts, pure: n <= 1, two: n === 2, suns };
+  }
+
+  // ---------- layout ----------
+  const L = { frame: null, sprites: {} };
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)';
+  document.body.appendChild(probe);
+  function layout() {
+    const cs = getComputedStyle(probe);
+    L.st = parseFloat(cs.paddingTop) || 0; L.sb = parseFloat(cs.paddingBottom) || 0;
+    L.lx = document.getElementById('gk-back') ? 62 : 18;
+    L.topY = L.st + 6;
+    L.meterX = W / 2; L.meterY = L.topY + 42; L.meterR = 33;
+    L.barBottom = L.topY + 110;
+    L.trayH = 138; L.trayY = H - L.sb - L.trayH;
+    L.hintY = L.trayY - 20;
+    const bw = 46;
+    L.sweepBtn = { x: 10, y: L.trayY + 20, w: bw, h: 100 };
+    L.deckBtn = { x: W - 10 - bw, y: L.trayY + 20, w: bw, h: 100 };
+    makeBackdrop();
+    layoutBoard();
+  }
+  function slotRects() {
+    const n = S.handSize, x0 = L.sweepBtn.x + L.sweepBtn.w + 10, x1 = L.deckBtn.x - 10, gap = 8;
+    const w = Math.min(104, (x1 - x0 - gap * (n - 1)) / n), tot = w * n + gap * (n - 1), sx = (x0 + x1 - tot) / 2, out = [];
+    for (let i = 0; i < n; i++) out.push({ x: sx + i * (w + gap), y: L.trayY + 18, w, h: 104 });
+    return out;
+  }
+  function layoutBoard() {
+    const wd = WINDOWS[S.shapeIdx], [ex0, ey0, ex1, ey1] = wd.ext, fr = 22;
+    const top = L.barBottom + fr, bottom = L.trayY - 36 - fr;
+    const availW = Math.min(W * 0.94, 560) - 2 * fr, availH = bottom - top;
+    const cs = Math.max(18, Math.min(availW / (ex1 - ex0), availH / (ey1 - ey0), 60));
+    L.cs = cs; L.lw = Math.max(2, cs * 0.075);
+    L.bx = W / 2 - cs * (ex0 + ex1) / 2;
+    L.by = top + (availH - cs * (ey1 - ey0)) * 0.42 - ey0 * cs;
+    L.ext = { x: L.bx + ex0 * cs, y: L.by + ey0 * cs, w: (ex1 - ex0) * cs, h: (ey1 - ey0) * cs };
+    L.sprites = {};
+    buildFrame();
+  }
+
+  // ---------- art: glass sprites ----------
+  function sprite(key, v) {
+    const id = key + (v | 0);
+    if (L.sprites[id]) return L.sprites[id];
+    const px = Math.max(12, Math.round((L.cs - L.lw) * DPR));
+    const c = document.createElement('canvas'); c.width = c.height = px;
+    const g = c.getContext('2d'); g.scale(px / 64, px / 64);
+    const rnd = seeded(key.length * 977 + (v | 0) * 131 + key.charCodeAt(0));
+    if (key === 'empty') {
+      g.fillStyle = LIME; g.fillRect(0, 0, 64, 64);
+      g.strokeStyle = '#e3d9c4'; g.lineWidth = 2;
+      for (let k = -64; k < 64; k += 11) { g.beginPath(); g.moveTo(k, 64); g.lineTo(k + 64, 0); g.stroke(); }
+      g.fillStyle = 'rgba(120,100,70,.08)'; g.fillRect(0, 0, 64, 4); g.fillRect(0, 0, 4, 64);
+      L.sprites[id] = c; return c;
+    }
+    const G = GLASS[key], base = G.base;
+    g.fillStyle = base; g.fillRect(0, 0, 64, 64);
+    if (key === 'sun') {
+      let gr = g.createRadialGradient(32, 32, 2, 32, 32, 40); gr.addColorStop(0, '#fffbe6'); gr.addColorStop(0.45, GLOW); gr.addColorStop(1, '#f0b43a');
+      g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      g.strokeStyle = 'rgba(176,112,10,.55)'; g.lineWidth = 3;
+      g.beginPath(); g.arc(32, 32, 8, 0, 7); g.stroke();
+      for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; g.beginPath(); g.moveTo(32 + Math.cos(a) * 13, 32 + Math.sin(a) * 13); g.lineTo(32 + Math.cos(a) * 19, 32 + Math.sin(a) * 19); g.stroke(); }
+    } else if (key === 'crystal') {
+      let gr = g.createLinearGradient(0, 0, 64, 64); gr.addColorStop(0, '#ffffff'); gr.addColorStop(1, '#c9e2e7');
+      g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      g.fillStyle = 'rgba(255,255,255,.95)';
+      g.beginPath(); g.moveTo(10, 46); g.lineTo(46, 10); g.lineTo(54, 10); g.lineTo(18, 46); g.closePath(); g.fill();
+      g.beginPath(); g.moveTo(26, 52); g.lineTo(52, 26); g.lineTo(54, 30); g.lineTo(30, 54); g.closePath(); g.fill();
+    } else {
+      let gr = g.createLinearGradient(0, 0, 64, 64); gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(20,10,30,.22)');
+      g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      gr = g.createRadialGradient(15, 13, 0, 15, 13, 42); gr.addColorStop(0, 'rgba(255,255,255,.34)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+      if (key === 'grey') {
+        for (let k = 0; k < 60; k++) { g.fillStyle = rnd() < 0.5 ? 'rgba(255,255,255,.09)' : 'rgba(0,0,0,.06)'; g.fillRect(rnd() * 64, rnd() * 64, 2, 2); }
+        g.fillStyle = 'rgba(255,255,255,.6)';
+        for (let k = 0; k < 3; k++) { g.beginPath(); g.arc(12 + rnd() * 40, 12 + rnd() * 40, 1.6, 0, 7); g.fill(); }
+      }
+    }
+    g.strokeStyle = key === 'crystal' ? 'rgba(120,160,170,.5)' : mix(base, LEAD, 0.25); g.lineWidth = 7; g.strokeRect(3.5, 3.5, 57, 57);
+    // seed bubbles
+    g.fillStyle = 'rgba(255,255,255,.18)';
+    const nb = 1 + (v % 2);
+    for (let k = 0; k < nb; k++) { g.beginPath(); g.arc(14 + rnd() * 36, 14 + rnd() * 36, 1.6 + rnd() * 1.6, 0, 7); g.fill(); }
+    // etched mark (colour-blind support)
+    if (G.mark) {
+      g.strokeStyle = G.darkMark ? 'rgba(90,50,0,.3)' : 'rgba(255,255,255,.3)'; g.fillStyle = g.strokeStyle; g.lineWidth = 3; g.lineCap = 'round';
+      g.beginPath();
+      if (G.mark === 'diamond') { g.moveTo(32, 23); g.lineTo(41, 32); g.lineTo(32, 41); g.lineTo(23, 32); g.closePath(); g.stroke(); }
+      else if (G.mark === 'ring') { g.arc(32, 32, 7.5, 0, 7); g.stroke(); }
+      else if (G.mark === 'leaf') { g.moveTo(23, 41); g.quadraticCurveTo(23, 23, 41, 23); g.quadraticCurveTo(41, 41, 23, 41); g.stroke(); }
+      else if (G.mark === 'dot') { g.arc(32, 32, 5, 0, 7); g.fill(); }
+      else if (G.mark === 'cross') { g.moveTo(32, 23); g.lineTo(32, 41); g.moveTo(23, 32); g.lineTo(41, 32); g.stroke(); }
+    }
+    L.sprites[id] = c; return c;
+  }
+
+  // ---------- art: window frame ----------
+  function outline(g) {
+    const wd = WINDOWS[S.shapeIdx], cs = L.cs, bx = L.bx, by = L.by;
+    g.beginPath();
+    if (wd.kind === 'lancet') {
+      const l = bx, r = bx + 7 * cs, b = by + 9 * cs, s = by + 2 * cs, cx = bx + 3.5 * cs, ap = by - 0.78 * cs;
+      g.moveTo(l, b); g.lineTo(l, s);
+      g.bezierCurveTo(l, s - 1.6 * cs, cx - 1.9 * cs, ap + 0.45 * cs, cx, ap);
+      g.bezierCurveTo(cx + 1.9 * cs, ap + 0.45 * cs, r, s - 1.6 * cs, r, s);
+      g.lineTo(r, b); g.closePath();
+    } else if (wd.kind === 'twin') {
+      const l = bx, r = bx + 8 * cs, b = by + 8 * cs, s = by + cs, m = bx + 4 * cs, ap = by - 0.62 * cs;
+      const arch = (a, z) => { const cx = (a + z) / 2; g.bezierCurveTo(a, s - 1.05 * cs, cx - 1.2 * cs, ap + 0.3 * cs, cx, ap); g.bezierCurveTo(cx + 1.2 * cs, ap + 0.3 * cs, z, s - 1.05 * cs, z, s); };
+      g.moveTo(l, b); g.lineTo(l, s); arch(l, m); arch(m, r); g.lineTo(r, b); g.closePath();
+    } else {
+      g.arc(bx + 4.5 * cs, by + 4.5 * cs, 5.16 * cs, 0, Math.PI * 2);
+    }
+  }
+  function buildFrame() {
+    const pad = 34, E = L.ext;
+    const x0 = E.x - pad, y0 = E.y - pad, w = E.w + 2 * pad, h = E.h + 2 * pad;
+    const c = document.createElement('canvas'); c.width = Math.ceil(w * DPR); c.height = Math.ceil(h * DPR);
+    const g = c.getContext('2d'); g.scale(DPR, DPR); g.translate(-x0, -y0);
+    const cs = L.cs, lw = L.lw, wd = WINDOWS[S.shapeIdx];
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    // stone surround, carved reveal, lead frame
+    g.save(); g.shadowColor = 'rgba(70,52,30,.38)'; g.shadowBlur = 18; g.shadowOffsetY = 7;
+    outline(g); g.fillStyle = '#b6a682'; g.strokeStyle = '#b6a682'; g.lineWidth = 44; g.stroke(); g.fill(); g.restore();
+    if (wd.kind === 'twin') { g.fillStyle = '#b6a682'; g.beginPath(); g.arc(L.bx + 4 * cs, L.by - 0.1 * cs, 0.42 * cs + 20, 0, 7); g.fill(); }
+    outline(g); g.strokeStyle = STONE; g.lineWidth = 39; g.stroke();
+    if (wd.kind === 'twin') { g.fillStyle = STONE; g.beginPath(); g.arc(L.bx + 4 * cs, L.by - 0.1 * cs, 0.42 * cs + 17, 0, 7); g.fill(); }
+    // speckle the stone
+    const rnd = seeded(S.shapeIdx * 31 + 5);
+    for (let k = 0; k < 160; k++) { g.fillStyle = rnd() < 0.5 ? 'rgba(255,250,235,.22)' : 'rgba(90,70,40,.12)'; g.fillRect(x0 + rnd() * w, y0 + rnd() * h, 1.5, 1.5); }
+    outline(g); g.strokeStyle = 'rgba(255,250,235,.35)'; g.lineWidth = 22; g.stroke();
+    outline(g); g.strokeStyle = STONE_SH; g.lineWidth = 18; g.stroke();
+    outline(g); g.strokeStyle = LEAD; g.lineWidth = 12; g.stroke();
+    // dim fixed glass in the tracery spaces
+    outline(g); const dg = g.createLinearGradient(0, E.y, 0, E.y + E.h); dg.addColorStop(0, '#5a4a66'); dg.addColorStop(1, '#3b3346'); g.fillStyle = dg; g.fill();
+    g.save(); outline(g); g.clip();
+    g.strokeStyle = LEAD; g.lineWidth = lw;
+    if (wd.kind === 'rose') {
+      const cx = L.bx + 4.5 * cs, cy = L.by + 4.5 * cs;
+      for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * 6 * cs, cy + Math.sin(a) * 6 * cs); g.stroke(); }
+    }
+    // lead behind every glass cell, then the empty panes
+    g.fillStyle = LEAD;
+    for (let r = 0; r < ROWS(); r++) for (let cc = 0; cc < COLS(); cc++) if (board[r][cc] !== undefined) g.fillRect(L.bx + cc * cs - lw / 2, L.by + r * cs - lw / 2, cs + lw, cs + lw);
+    const em = sprite('empty', 0);
+    for (let r = 0; r < ROWS(); r++) for (let cc = 0; cc < COLS(); cc++) if (board[r][cc] !== undefined) g.drawImage(em, L.bx + cc * cs + lw / 2, L.by + r * cs + lw / 2, cs - lw, cs - lw);
+    g.restore();
+    outline(g); g.strokeStyle = LEAD; g.lineWidth = 2 * lw + 2; g.stroke();
+    if (wd.kind === 'twin') {
+      const ox = L.bx + 4 * cs, oy = L.by - 0.1 * cs, rr = 0.42 * cs;
+      g.fillStyle = LEAD; g.beginPath(); g.arc(ox, oy, rr + 4, 0, 7); g.fill();
+      const og = g.createRadialGradient(ox - rr * 0.3, oy - rr * 0.3, 1, ox, oy, rr); og.addColorStop(0, GLOW); og.addColorStop(1, '#e8a52a');
+      g.fillStyle = og; g.beginPath(); g.arc(ox, oy, rr, 0, 7); g.fill();
+      g.strokeStyle = LEAD; g.lineWidth = 2; for (let k = 0; k < 4; k++) { const a = k * Math.PI / 4; g.beginPath(); g.moveTo(ox - Math.cos(a) * rr, oy - Math.sin(a) * rr); g.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr); g.stroke(); }
+    }
+    L.frame = { c, x0, y0, w, h };
+  }
+
+  // ---------- art: backdrop ----------
+  function makeBackdrop() {
+    const c = document.createElement('canvas'); c.width = Math.ceil(W * DPR); c.height = Math.ceil(H * DPR);
+    const g = c.getContext('2d'); g.scale(DPR, DPR);
+    const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, '#e9e1d0'); gr.addColorStop(1, '#d9cdb5');
+    g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    // ashlar joints
+    g.strokeStyle = 'rgba(160,140,105,.16)'; g.lineWidth = 1.5;
+    const rowH = 56;
+    for (let y = 30, k = 0; y < H; y += rowH, k++) {
+      g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+      for (let x = (k % 2 ? 40 : 100); x < W; x += 140) { g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + rowH); g.stroke(); }
+    }
+    // sun shafts
+    g.fillStyle = 'rgba(255,248,222,.22)';
+    for (let k = 0; k < 4; k++) { const x = -60 + k * W * 0.32; g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 46 + k * 10, 0); g.lineTo(x + 46 + k * 10 + H * 0.45, H); g.lineTo(x + H * 0.45, H); g.closePath(); g.fill(); }
+    L.backdrop = c;
+  }
+  const dust = [];
+  for (let i = 0; i < 11; i++) dust.push({ x: Math.random(), y: Math.random(), vx: (Math.random() - 0.5) * 0.012, vy: 0.006 + Math.random() * 0.01, r: 1 + Math.random() * 1.6, p: Math.random() * 6 });
+
+  // ---------- run flow ----------
+  function enterTitle() {
+    S.mode = 'title'; S.t = 0; S.handSize = 3; buildBoard(0); layoutBoard();
+    titleQ = []; titleIdx = 0;
+    const cols = ['ruby', 'sapphire', 'emerald', 'amber', 'ruby', 'sapphire', 'amethyst', 'amber'];
+    for (let r = 0; r < ROWS(); r++) for (let c = 0; c < COLS(); c++) if (board[r][c] !== undefined) titleQ.push([r, c, Math.random() < 0.05 ? 'sun' : pick(cols)]);
+    shuffle(titleQ);
+  }
+  function startRun() {
+    S.deck = START.map(([s, c]) => makeCard(s, c)); S.owned = new Set(); S.total = 0; S.n = 1; S.newBest = false; S.mode = 'play';
+    S.firstRun = !hintsDone; S.hintStep = S.firstRun ? 0 : -1; S.hintT = 0; S.placed = 0;
+    motes = []; parts = []; pops = []; clears = []; beams = []; S.rays = null;
+    GameKit.sound(1319, 0.12, 'sine', 0.04);
+    startWindow();
+  }
+  function startWindow() {
+    buildBoard((S.n - 1) % 3); layoutBoard();
+    placeOld(S.n < 3 ? 0 : Math.min(14, 2 * (S.n - 2)));
+    S.target = Math.round(160 * Math.pow(1.3, S.n - 1) / 10) * 10;
+    S.cutsMax = S.cuts = 12 + (has('came') ? 2 : 0);
+    S.sweepsMax = S.sweeps = 1 + (has('rose') ? 1 : 0);
+    S.handSize = has('steady') ? 4 : 3;
+    S.light = 0; S.lightShown = 0; S.kilnUsed = false; S.jamHint = false; S.sheet = false; S.ghost = null; drag = null; ret = null; S.dm = null;
+    S.draw = shuffle(S.deck.slice()); S.discard = []; S.hand = [];
+    for (let i = 0; i < S.handSize; i++) { const k = S.draw.pop(); k.appear = -i * 0.12; k.spin = 0; S.hand.push(k); }
+    S.sel = 0; S.phase = 'board'; S.pt = 0; S.banner = 1.9; S.chosen = -1; S.demoT = 1.0;
+    setBW(S.n);
+    checkJam();
+  }
+  function drawOne() {
+    if (!S.draw.length) { S.draw = shuffle(S.discard); S.discard = []; S.shuffleT = 1; GameKit.sound(1568, 0.05, 'triangle', 0.025); }
+    const k = S.draw.pop(); if (k) { k.appear = 0; k.spin = 0; } return k;
+  }
+  function anyFits() {
+    const R = ROWS(), C = COLS();
+    for (const k of S.hand) { if (!k) continue; for (const rc of rotations(k.cells)) for (let ay = 0; ay < R; ay++) for (let ax = 0; ax < C; ax++) if (fits(rc, ax, ay)) return true; }
+    return false;
+  }
+  function fitsSomewhere(cells) {
+    const R = ROWS(), C = COLS();
+    for (let ay = 0; ay < R; ay++) for (let ax = 0; ax < C; ax++) if (fits(cells, ax, ay)) return true;
+    return false;
+  }
+  // the highlighted card is the one a tap on the window sets; keep it on a card that can go somewhere
+  function fixSel() {
+    const ok = (h) => h && rotations(h.cells).some(fitsSomewhere);
+    if (ok(S.hand[S.sel])) return;
+    const i = S.hand.findIndex(ok);
+    if (i >= 0) S.sel = i;
+  }
+  function checkJam() {
+    if (S.phase !== 'board') return;
+    fixSel();
+    if (anyFits()) { S.jamHint = false; return; }
+    if (S.sweeps > 0) { if (!S.jamHint) GameKit.sound(196, 0.08, 'triangle', 0.06); S.jamHint = true; }
+    else loseRun('jam');
+  }
+
+  function place(i, ax, ay) {
+    const card = S.hand[i]; if (!card) return;
+    const cells = card.cells, lw = L.lw, cs = L.cs;
+    for (const q of cells) board[ay + q.y][ax + q.x] = { c: q.c, v: (ax + q.x + ay + q.y) % 3, pop: T };
+    S.cuts--; S.placed++;
+    let gain = cells.length;
+    const done = S.lines.filter(full);
+    let lineTotal = 0, tag = '';
+    if (done.length) {
+      const sc = done.map(lineScore);
+      if (has('kiln') && !S.kilnUsed) { let b = 0; sc.forEach((s, k) => { if (s.pts > sc[b].pts) b = k; }); sc[b].pts *= 3; S.kilnUsed = true; tag = 'KILN MARK'; }
+      lineTotal = Math.round(sc.reduce((a, s) => a + s.pts, 0) * done.length);
+      const pure = sc.some((s) => s.pure), two = sc.some((s) => s.two), suns = sc.some((s) => s.suns > 0);
+      const parts2 = [];
+      if (pure) parts2.push('PURE'); else if (two) parts2.push('TWO-TONE');
+      if (suns) parts2.push('SUNLIT');
+      if (done.length > 1) parts2.push('x' + done.length + ' COMBO');
+      if (tag) parts2.push(tag);
+      // effects: beams along each line, cells flash then fly to the rose meter
+      const uniq = new Map();
+      for (const l of done) { beams.push({ l, t: 0 }); for (const [r, c] of l.cells) uniq.set(r * 64 + c, { r, c, cell: board[r][c] }); }
+      let k = 0, sx = 0, sy = 0;
+      for (const q of uniq.values()) { clears.push({ r: q.r, c: q.c, cell: q.cell, t: 0, delay: 0.26 + k * 0.02 }); k++; sx += q.c; sy += q.r; }
+      for (const q of uniq.values()) board[q.r][q.c] = null;
+      const px = L.bx + (sx / k + 0.5) * cs, py = L.by + (sy / k + 0.5) * cs;
+      pops.push({ x: px, y: py, text: '+' + fmt(lineTotal), sub: parts2.join(' · '), t: 0, life: 1.3, big: true });
+      done.forEach((l, j) => setTimeout(() => GameKit.sound([1047, 1175, 1319, 1568, 1760][Math.min(4, j)], 0.14, 'sine', 0.06), j * 80));
+      if (pure) setTimeout(() => GameKit.sound(2093, 0.3, 'sine', 0.04), done.length * 80);
+      kit.buzz('medium');
+      if (done.length >= 2) S.rays = { t: 0, dur: 0.5, kind: 'combo' };
+      if (done.length >= 3) S.shake = Math.max(S.shake, 5);
+      if (S.hintStep === 2) { S.hintStep = 3; S.hintT = 0; }
+    } else {
+      const bb = bbox(cells);
+      pops.push({ x: L.bx + (ax + bb.w / 2) * cs, y: L.by + (ay + bb.h / 2) * cs, text: '+' + gain, sub: '', t: 0, life: 0.7, big: false });
+      kit.buzz('light');
+    }
+    GameKit.sound(1760, 0.04, 'triangle', 0.05);
+    gain += lineTotal;
+    S.light += gain; S.total += gain;
+    if (S.hintStep === 0) S.hintStep = 1;
+    else if (S.hintStep === 1 && S.placed >= 3) S.hintStep = 2;
+    // deck flow
+    S.discard.push(card); S.hand[i] = drawOne();
+    if (S.light >= S.target) return finishWindow();
+    if (S.cuts <= 0) return loseRun('dark');
+    checkJam();
+  }
+  function rotateCard(i) {
+    const k = S.hand[i]; if (!k) return;
+    const r = rotCW(k.cells);
+    if (sig(r) === sig(k.cells)) { k.wig = 1; GameKit.sound(1800, 0.03, 'sine', 0.015); return; }
+    k.cells = r; k.spin = 1;
+    GameKit.sound(2349, 0.025, 'sine', 0.02);
+    if (S.hintStep === 1) S.hintStep = 2;
+  }
+  function sweep() {
+    if (S.phase !== 'board' || S.sweeps <= 0) { GameKit.sound(196, 0.08, 'triangle', 0.05); return; }
+    S.sweeps--; S.jamHint = false;
+    for (let i = 0; i < S.hand.length; i++) { if (S.hand[i]) S.discard.push(S.hand[i]); S.hand[i] = null; }
+    for (let i = 0; i < S.handSize; i++) { S.hand[i] = drawOne(); if (S.hand[i]) S.hand[i].appear = -i * 0.1; }
+    [1319, 1047, 1568].forEach((f, k) => setTimeout(() => GameKit.sound(f, 0.06, 'triangle', 0.03), k * 50));
+    kit.buzz('light');
+    checkJam();
+  }
+  function finishWindow() {
+    S.phase = 'finish'; S.pt = 0; drag = null; S.ghost = null; S.jamHint = false; S.dm = null;
+    S.bonus = S.cuts * 15 * S.n; S.total += S.bonus;
+    if (kit.saveBest(Math.round(S.total))) S.newBest = true;
+    [1047, 1319, 1568, 2093, 2637].forEach((f, k) => setTimeout(() => GameKit.sound(f, 0.18, 'sine', 0.05), k * 90));
+    kit.buzz('heavy');
+    S.rays = { t: 0, dur: 1.0, kind: 'pour' };
+    if (S.firstRun && !hintsDone) { hintsDone = true; kit.set('hints', true); }
+    S.hintStep = -1;
+  }
+  function loseRun(cause) {
+    S.phase = 'dying'; S.pt = 0; S.cause = cause; drag = null; S.ghost = null; S.jamHint = false; S.dm = null;
+    if (kit.saveBest(Math.round(S.total))) S.newBest = true;
+    setBW(S.n); S.shake = 6;
+    GameKit.sound(220, 0.25, 'triangle', 0.07); setTimeout(() => GameKit.sound(165, 0.4, 'triangle', 0.07), 220);
+    kit.buzz('heavy');
+    if (S.firstRun && !hintsDone) { hintsDone = true; kit.set('hints', true); }
+    S.hintStep = -1;
+  }
+  function openWorkshop() {
+    S.phase = 'workshop'; S.pt = 0; S.chosen = -1; S.ct = 0; S.rays = null;
+    const n = S.n, free = TRACERIES.filter((t) => !has(t.id));
+    if (n % 3 === 0 && free.length) {
+      S.offers = shuffle(free.slice()).slice(0, 3).map((t) => ({ type: 'tracery', id: t.id }));
+    } else {
+      const third = (n % 2 === 1 && S.deck.length > 6) ? { type: 'remove' } : { type: 'pane', card: newSpecial() };
+      S.offers = [{ type: 'pane', card: newPane() }, { type: 'pane', card: newPane() }, third];
+    }
+  }
+  function choose(i) {
+    const o = S.offers[i]; if (!o || S.chosen >= 0) return;
+    if (o.type === 'remove') { S.phase = 'remove'; S.pt = 0; GameKit.sound(1175, 0.05, 'triangle', 0.03); return; }
+    S.chosen = i; S.ct = 0;
+    if (o.type === 'pane') S.deck.push(o.card);
+    if (o.type === 'tracery') S.owned.add(o.id);
+    GameKit.sound(1568, 0.1, 'sine', 0.05); setTimeout(() => GameKit.sound(2093, 0.16, 'sine', 0.04), 90);
+    kit.buzz('light');
+  }
+  function keepDeck() { if (S.chosen >= 0) return; S.chosen = 9; S.ct = 0; GameKit.sound(1319, 0.08, 'sine', 0.04); }
+  function removeCard(k) {
+    S.deck = S.deck.filter((d) => d !== k); S.phase = 'workshop'; S.chosen = 2; S.ct = 0.1;
+    GameKit.sound(330, 0.12, 'triangle', 0.05); kit.buzz('medium');
+    const r = remRects().find((q) => q.card === k);
+    if (r) for (let j = 0; j < 14; j++) parts.push({ x: r.x + r.w / 2, y: r.y + r.h / 2, vx: (Math.random() - 0.5) * 260, vy: -Math.random() * 220, life: 0.8, col: GLASS[k.color].base, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 12, s: 4 + Math.random() * 5 });
+  }
+
+  // ---------- geometry for overlays ----------
+  function offerRects() {
+    const n = S.offers.length, gap = 10, w = Math.min(122, (W - 32 - gap * (n - 1)) / n), h = Math.min(186, Math.max(150, H * 0.22));
+    const tot = n * w + (n - 1) * gap, x0 = (W - tot) / 2, y0 = wsTop() + 186;
+    return S.offers.map((o, i) => ({ x: x0 + i * (w + gap), y: y0, w, h }));
+  }
+  function wsTop() { return L.st + Math.max(0, (H - L.st - L.sb - 600) / 2 - 10); }
+  function keepRect() { const o = offerRects()[0]; const y = o ? o.y + o.h + 84 : H * 0.7; return { x: W / 2 - 100, y, w: 200, h: 48 }; }
+  function gridRects(list, y0) {
+    const cw = 58, ch = 64, gap = 8, cols = Math.max(3, Math.floor((W - 32 + gap) / (cw + gap)));
+    const tot = Math.min(cols, list.length) * (cw + gap) - gap, x0 = (W - Math.max(tot, 0)) / 2;
+    return list.map((card, i) => ({ card, x: x0 + (i % cols) * (cw + gap), y: y0 + Math.floor(i / cols) * (ch + gap), w: cw, h: ch }));
+  }
+  const remRects = () => gridRects(S.deck, L.st + 150);
+
+  // ---------- ghost / drop ----------
+  function pieceOffset(cells) { return Math.max(64, bbox(cells).h * L.cs / 2 + 34); }
+  function ghostFor(cells, cx, cy, rad) {
+    rad = rad || 1;
+    const bb = bbox(cells), cs = L.cs;
+    const fx = (cx - L.bx) / cs - bb.w / 2, fy = (cy - L.by) / cs - bb.h / 2;
+    if (fx < -bb.w + 0.3 || fy < -bb.h + 0.3 || fx > COLS() - 0.3 || fy > ROWS() - 0.3) return null;
+    const ax0 = Math.round(fx), ay0 = Math.round(fy);
+    let best = null, bd = 1e9;
+    for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+      const ax = ax0 + dx, ay = ay0 + dy;
+      if (!fits(cells, ax, ay)) continue;
+      const d = (ax - fx) * (ax - fx) + (ay - fy) * (ay - fy);
+      if (d < bd) { bd = d; best = { ax, ay }; }
+    }
+    if (best && bd < (rad > 1 ? 6 : 1.3)) return { ax: best.ax, ay: best.ay, ok: true, cells };
+    return { ax: ax0, ay: ay0, ok: false, cells };
+  }
+  function previewLines(g) {
+    for (const q of g.cells) board[g.ay + q.y][g.ax + q.x] = { c: q.c };
+    const done = S.lines.filter(full);
+    for (const q of g.cells) board[g.ay + q.y][g.ax + q.x] = null;
+    return done;
+  }
+  function updateGhost() {
+    if (!drag || !drag.moved) { S.ghost = null; return; }
+    const k = S.hand[drag.i]; if (!k) { S.ghost = null; return; }
+    const off = drag.tray ? pieceOffset(k.cells) : 0;
+    let g = ghostFor(k.cells, drag.x, drag.y - off, drag.tray ? 1 : 2);
+    if (!drag.tray && g && !g.ok) {
+      // tapping the window: if the pane will not go here as it is turned, try it turned the other ways
+      for (const rc of rotations(k.cells).slice(1)) { const g2 = ghostFor(rc, drag.x, drag.y, 2); if (g2 && g2.ok) { g = g2; break; } }
+    }
+    if (g && g.ok) { if (!S.ghost || S.ghost.ax !== g.ax || S.ghost.ay !== g.ay || !S.ghost.ok || S.ghost.cells !== g.cells) g.lines = previewLines(g); else g.lines = S.ghost.lines; }
+    S.ghost = g;
+  }
+  function slotCenter(i) { const r = slotRects()[i]; return r ? { x: r.x + r.w / 2, y: r.y + r.h / 2 } : { x: W / 2, y: H - 60 }; }
+  function drop() {
+    const g = S.ghost, d = drag; drag = null; S.ghost = null;
+    if (!d) return;
+    if (g && g.ok) { const k = S.hand[d.i]; if (k && g.cells !== k.cells) { k.cells = g.cells; k.spin = 1; } place(d.i, g.ax, g.ay); return; }
+    const k = S.hand[d.i];
+    if (k && d.moved) {
+      const off = d.tray ? pieceOffset(k.cells) : 0;
+      ret = { i: d.i, x: d.x, y: d.y - off, t: 0, scale: L.cs };
+      if (g) GameKit.sound(196, 0.08, 'triangle', 0.06);
+    }
+  }
+
+  // ---------- input ----------
+  let pid = null;
+  const P = (e) => ({ x: e.clientX, y: e.clientY });
+  function onDown(e) {
+    e.preventDefault();
+    const p = P(e);
+    if (S.mode === 'paused') { S.mode = 'play'; return; }
+    if (S.mode === 'title') { if (S.t > 0.15) startRun(); return; }
+    if (S.mode === 'over') { if (S.ot > 0.35) startRun(); return; }
+    if (S.sheet) { S.sheet = false; return; }
+    if (S.phase === 'workshop') {
+      if (S.pt < 0.35 || S.chosen >= 0) return;
+      const i = offerRects().findIndex((r) => inRect(p, r));
+      if (i >= 0) return choose(i);
+      if (inRect(p, keepRect())) keepDeck();
+      return;
+    }
+    if (S.phase === 'remove') {
+      if (S.pt < 0.2) return;
+      const r = remRects().find((q) => inRect(p, q));
+      if (r && S.deck.length > 6) removeCard(r.card); else { S.phase = 'workshop'; S.pt = 0.35; }
+      return;
+    }
+    if (S.phase === 'finish') { if (S.pt > 0.7) openWorkshop(); return; }
+    if (S.phase !== 'board' || S.demo) return;
+    if (inRect(p, { x: L.sweepBtn.x - 4, y: L.sweepBtn.y - 6, w: L.sweepBtn.w + 8, h: L.sweepBtn.h + 12 })) return sweep();
+    if (inRect(p, { x: L.deckBtn.x - 4, y: L.deckBtn.y - 6, w: L.deckBtn.w + 8, h: L.deckBtn.h + 12 })) { S.sheet = true; GameKit.sound(1175, 0.04, 'triangle', 0.02); return; }
+    if (S.jamHint && Math.abs(p.y - L.hintY) < 20 && Math.abs(p.x - W / 2) < 150) return sweep();
+    const slots = slotRects();
+    for (let i = 0; i < slots.length; i++) {
+      const r = slots[i];
+      if (inRect(p, { x: r.x - 3, y: r.y - 10, w: r.w + 6, h: r.h + 20 }) && S.hand[i]) {
+        S.sel = i; ret = null; pid = e.pointerId;
+        drag = { i, x: p.x, y: p.y, sx: p.x, sy: p.y, moved: false, tray: true, t: 0 };
+        return;
+      }
+    }
+    const E = L.ext;
+    if (p.x > E.x - 16 && p.x < E.x + E.w + 16 && p.y > E.y - 16 && p.y < E.y + E.h + 16 && S.hand[S.sel]) {
+      ret = null; pid = e.pointerId;
+      drag = { i: S.sel, x: p.x, y: p.y, moved: true, tray: false, t: 1 };
+      updateGhost();
+    }
+  }
+  function onMove(e) {
+    if (!drag || drag.demo || (pid !== null && e.pointerId !== pid)) return;
+    const p = P(e); drag.x = p.x; drag.y = p.y;
+    if (drag.tray && !drag.moved && Math.hypot(p.x - drag.sx, p.y - drag.sy) > 10) { drag.moved = true; GameKit.sound(1568, 0.02, 'sine', 0.015); }
+    updateGhost();
+  }
+  function onUp(e) {
+    if (!drag || drag.demo || (pid !== null && e.pointerId !== pid)) return;
+    pid = null;
+    const p = P(e); drag.x = p.x; drag.y = p.y;
+    if (drag.tray && !drag.moved) { const i = drag.i; drag = null; rotateCard(i); return; }
+    updateGhost(); drop();
+  }
+  cv.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', () => { if (drag && !drag.demo) { drag = null; S.ghost = null; pid = null; } });
+  kit.onPause(() => { if (S.mode === 'play') { S.mode = 'paused'; if (drag && !drag.demo) { drag = null; S.ghost = null; } } });
+
+  // ---------- autopilot ----------
+  function evalMove(cells, ax, ay) {
+    for (const q of cells) board[ay + q.y][ax + q.x] = { c: q.c };
+    const done = S.lines.filter(full);
+    let gain = cells.length;
+    if (done.length) {
+      const sc = done.map(lineScore);
+      let sum = sc.reduce((a, s) => a + s.pts, 0);
+      if (has('kiln') && !S.kilnUsed) sum += 2 * Math.max(...sc.map((s) => s.pts));
+      gain += sum * done.length;
+    }
+    const saved = [];
+    for (const l of done) for (const [r, c] of l.cells) if (board[r][c]) { saved.push([r, c, board[r][c]]); board[r][c] = null; }
+    let near = 0, purity = 0, holes = 0;
+    const touched = new Set(cells.map((q) => 'r' + (ay + q.y)).concat(cells.map((q) => 'c' + (ax + q.x))));
+    for (const l of S.lines) {
+      let empty = 0; const cols = new Set();
+      for (const [r, c] of l.cells) { const v = board[r][c]; if (!v) empty++; else if (v.c !== 'sun' && v.c !== 'crystal' && !(v.c === 'grey' && has('eye'))) cols.add(v.c); }
+      if (empty === 1) near += l.cells.length;
+      const key = (l.col ? 'c' : 'r') + (l.col ? l.cells[0][1] : l.cells[0][0]);
+      if (touched.has(key) && empty > 0) purity += cols.size <= 1 ? 3 : cols.size === 2 ? (has('prism') ? 3 : 1) : -3;
+    }
+    const R = ROWS(), C = COLS();
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      if (board[r][c] !== null) continue;
+      const open = (rr, cc) => rr >= 0 && cc >= 0 && rr < R && cc < C && board[rr][cc] === null;
+      if (!open(r - 1, c) && !open(r + 1, c) && !open(r, c - 1) && !open(r, c + 1)) holes++;
+    }
+    for (const [r, c, v] of saved) board[r][c] = v;
+    for (const q of cells) board[ay + q.y][ax + q.x] = null;
+    let val = gain + 6 * near - 4 * holes + purity;
+    if (S.light + gain >= S.target) val += 100000;
+    return val;
+  }
+  function bestMove() {
+    let best = null;
+    const R = ROWS(), C = COLS();
+    S.hand.forEach((k, i) => {
+      if (!k) return;
+      for (const rc of rotations(k.cells)) {
+        const bb = bbox(rc);
+        for (let ay = 0; ay <= R - bb.h; ay++) for (let ax = 0; ax <= C - bb.w; ax++) {
+          if (!fits(rc, ax, ay)) continue;
+          const v = evalMove(rc, ax, ay) + Math.random() * 0.5;
+          if (!best || v > best.v) best = { i, cells: rc, ax, ay, v };
+        }
+      }
+    });
+    return best;
+  }
+  function demoChoose() {
+    if (S.offers[0] && S.offers[0].type === 'tracery') return choose(0);
+    const count = {}; for (const k of S.deck) if (!k.special) count[k.color] = (count[k.color] || 0) + 1;
+    const top = Object.keys(count).sort((a, b) => count[b] - count[a])[0];
+    let i = S.offers.findIndex((o) => o.type === 'pane' && o.card.color === top);
+    if (i < 0) i = S.offers.findIndex((o) => o.type === 'pane' && o.card.special);
+    choose(i < 0 ? 0 : i);
+  }
+  function demoTick(dt) {
+    if (!S.demo) return;
+    S.demoT -= dt;
+    if (S.mode === 'title') { if (S.demoT <= 0) startRun(); return; }
+    if (S.mode === 'over') { if (S.ot > 1.5) startRun(); return; }
+    if (S.mode !== 'play') return;
+    if (S.sheet) S.sheet = false;
+    if (S.phase === 'remove') { S.phase = 'workshop'; S.pt = 0.4; return; }
+    if (S.phase === 'workshop') { if (S.pt > 0.8 && S.chosen < 0) demoChoose(); return; }
+    if (S.phase !== 'board') return;
+    if (S.dm) {
+      const m = S.dm; m.t += dt / 0.42;
+      const k = easeOut(m.t);
+      drag.x = lerp(m.fx, m.tx, k); drag.y = lerp(m.fy, m.ty, k) - Math.sin(Math.PI * clamp(m.t, 0, 1)) * 40;
+      S.ghost = ghostFor(S.hand[m.i].cells, drag.x, drag.y - pieceOffset(S.hand[m.i].cells));
+      if (S.ghost && S.ghost.ok) S.ghost.lines = previewLines(S.ghost);
+      if (m.t >= 1.25) { drag = null; S.ghost = null; S.dm = null; S.demoT = 0.55; place(m.i, m.ax, m.ay); }
+      return;
+    }
+    if (S.demoT > 0 || S.banner > 0.5) return;
+    const m = bestMove();
+    if (!m) { if (S.sweeps > 0) sweep(); S.demoT = 0.55; return; }
+    const k = S.hand[m.i];
+    if (sig(k.cells) !== sig(m.cells)) { k.cells = m.cells; k.spin = 1; GameKit.sound(2349, 0.025, 'sine', 0.02); }
+    S.sel = m.i;
+    const from = slotCenter(m.i), bb = bbox(m.cells), off = pieceOffset(m.cells);
+    const tx = L.bx + (m.ax + bb.w / 2) * L.cs, ty = L.by + (m.ay + bb.h / 2) * L.cs + off;
+    drag = { i: m.i, x: from.x, y: from.y, moved: true, tray: true, demo: true, t: 0 };
+    S.dm = { i: m.i, ax: m.ax, ay: m.ay, fx: from.x, fy: from.y, tx, ty, t: 0 };
+  }
+
+  // ---------- update ----------
+  function update(dt) {
+    T += dt; S.t += dt; S.pt += dt; S.ot += dt;
+    S.shake = Math.max(0, S.shake - 30 * dt);
+    S.meterGlow = Math.max(0, S.meterGlow - dt * 2.5);
+    S.shuffleT = Math.max(0, S.shuffleT - dt * 2);
+    S.banner = Math.max(0, S.banner - dt);
+    S.lightShown += (S.light - S.lightShown) * Math.min(1, dt * 5);
+    if (Math.abs(S.light - S.lightShown) < 0.6) S.lightShown = S.light;
+    for (const d of dust) { d.x += d.vx * dt; d.y += d.vy * dt; d.p += dt; if (d.y > 1.05) { d.y = -0.05; d.x = Math.random(); } if (d.x < -0.05) d.x = 1.05; if (d.x > 1.05) d.x = -0.05; }
+    for (const k of S.hand) if (k) { k.appear = Math.min(1, k.appear + dt / 0.22); k.spin = Math.max(0, k.spin - dt / 0.12); k.wig = Math.max(0, k.wig - dt / 0.25); }
+    if (drag) drag.t = Math.min(1, drag.t + dt / 0.12);
+    if (ret) { ret.t += dt / 0.18; if (ret.t >= 1) ret = null; }
+    for (const b of beams) b.t += dt;
+    beams = beams.filter((b) => b.t < 0.32);
+    const meter = { x: L.meterX, y: L.meterY };
+    for (const q of clears) {
+      q.t += dt;
+      if (q.t >= q.delay && !q.gone) {
+        q.gone = true;
+        const x = L.bx + (q.c + 0.5) * L.cs, y = L.by + (q.r + 0.5) * L.cs;
+        motes.push({ x0: x, y0: y, x1: meter.x + (Math.random() - 0.5) * 20, y1: meter.y + (Math.random() - 0.5) * 20, t: 0, col: GLASS[q.cell.c].base });
+        for (let j = 0; j < 2; j++) parts.push({ x, y, vx: (Math.random() - 0.5) * 160, vy: -40 - Math.random() * 120, life: 0.55, col: GLASS[q.cell.c].base, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 14, s: 3 + Math.random() * 3 });
+      }
+    }
+    clears = clears.filter((q) => !q.gone);
+    for (const m of motes) { m.t += dt / 0.4; if (m.t >= 1 && !m.hit) { m.hit = true; S.meterGlow = 1; } }
+    motes = motes.filter((m) => m.t < 1);
+    for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 520 * dt; p.rot += p.vr * dt; p.life -= dt; }
+    parts = parts.filter((p) => p.life > 0);
+    for (const p of pops) p.t += dt;
+    pops = pops.filter((p) => p.t < p.life);
+    if (S.rays) { S.rays.t += dt; if (S.rays.t >= S.rays.dur) S.rays = null; }
+    if (S.hintStep === 3) { S.hintT += dt; if (S.hintT > 4) S.hintStep = 4; }
+
+    if (S.mode === 'title') {
+      while (titleIdx < titleQ.length && S.t > 0.3 + titleIdx * 0.032) { const [r, c, col] = titleQ[titleIdx++]; board[r][c] = { c: col, v: (r + c) % 3, pop: T }; }
+    }
+    if (S.mode === 'play') {
+      if (S.phase === 'finish' && S.pt > 1.5) openWorkshop();
+      if (S.phase === 'dying' && S.pt > 0.85) { S.mode = 'over'; S.ot = 0; }
+      if (S.phase === 'workshop' && S.chosen >= 0) { S.ct += dt; if (S.ct > 0.5) { S.n++; startWindow(); } }
+    }
+    demoTick(dt);
+  }
+
+  // ---------- drawing helpers ----------
+  function txt(s, x, y, size, col, align, weight, spacing, italic) {
+    ctx.font = (italic ? 'italic ' : '') + (weight || 600) + ' ' + size + 'px ' + SERIF;
+    ctx.fillStyle = col || INK; ctx.textBaseline = 'alphabetic';
+    if (!spacing) { ctx.textAlign = align || 'center'; ctx.fillText(s, x, y); return ctx.measureText(s).width; }
+    const sp = spacing * size, chars = Array.from(s), ws = chars.map((ch) => ctx.measureText(ch).width);
+    const tot = ws.reduce((a, b) => a + b, 0) + sp * (chars.length - 1);
+    let cx = align === 'left' ? x : align === 'right' ? x - tot : x - tot / 2;
+    ctx.textAlign = 'left';
+    chars.forEach((ch, i) => { ctx.fillText(ch, cx, y); cx += ws[i] + sp; });
+    return tot;
+  }
+  function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+  function wrap(s, maxW, size) {
+    ctx.font = '500 ' + size + 'px ' + SERIF;
+    const words = s.split(' '), lines = []; let cur = '';
+    for (const w of words) { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t; }
+    if (cur) lines.push(cur); return lines;
+  }
+  // a piece with its lead, centred at (cx, cy), cell size `size`
+  function drawPiece(cells, cx, cy, size, alpha) {
+    const bb = bbox(cells), x0 = cx - bb.w * size / 2, y0 = cy - bb.h * size / 2, lw = Math.max(1.2, size * 0.08);
+    if (alpha !== undefined) ctx.globalAlpha = alpha;
+    ctx.fillStyle = LEAD;
+    for (const q of cells) ctx.fillRect(x0 + q.x * size - lw / 2, y0 + q.y * size - lw / 2, size + lw, size + lw);
+    for (const q of cells) ctx.drawImage(sprite(q.c, (q.x * 2 + q.y) % 3), x0 + q.x * size + lw / 2, y0 + q.y * size + lw / 2, size - lw, size - lw);
+    ctx.globalAlpha = 1;
+  }
+  function pieceFit(cells, w, h, max) { const bb = bbox(cells); return Math.min((w - 14) / bb.w, (h - 18) / bb.h, max); }
+  function slab(x, y, w, h, sel, col) {
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 3;
+    ctx.fillStyle = col || '#efe7d6'; rr(x, y, w, h, 10); ctx.fill(); ctx.restore();
+    const g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, 'rgba(255,255,255,.5)'); g.addColorStop(1, 'rgba(160,140,100,.12)');
+    ctx.fillStyle = g; rr(x, y, w, h, 10); ctx.fill();
+    ctx.strokeStyle = sel ? GOLD : 'rgba(80,66,48,.25)'; ctx.lineWidth = sel ? 3 : 1; rr(x + (sel ? 1.5 : 0.5), y + (sel ? 1.5 : 0.5), w - (sel ? 3 : 1), h - (sel ? 3 : 1), 9); ctx.stroke();
+  }
+  function specialMark(k, x, y) {
+    if (!k.special) return;
+    if (k.special === 'crystal') { ctx.fillStyle = '#9fc4cc'; ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 5, y); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#fff'; ctx.fillRect(x - 1, y - 3, 2, 3); return; }
+    ctx.fillStyle = '#e8a52a'; ctx.beginPath(); ctx.arc(x, y, 3.6, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#e8a52a'; ctx.lineWidth = 1.5;
+    for (let j = 0; j < 8; j++) { const a = j * Math.PI / 4; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * 5, y + Math.sin(a) * 5); ctx.lineTo(x + Math.cos(a) * 7.5, y + Math.sin(a) * 7.5); ctx.stroke(); }
+  }
+  function cardSlab(k, r, sel) {
+    slab(r.x, r.y, r.w, r.h, sel);
+    const s = pieceFit(k.cells, r.w, r.h, 22);
+    drawPiece(k.cells, r.x + r.w / 2, r.y + r.h / 2, s);
+    specialMark(k, r.x + r.w - 11, r.y + 11);
+  }
+  function medallion(id, x, y, rad) {
+    const t = TRACERIES.find((q) => q.id === id);
+    ctx.fillStyle = STONE; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+    ctx.fillStyle = LEAD; ctx.beginPath(); ctx.arc(x, y, rad * 0.84, 0, 7); ctx.fill();
+    const g = ctx.createRadialGradient(x - rad * 0.3, y - rad * 0.35, 1, x, y, rad * 0.8); g.addColorStop(0, mix(t.col, '#ffffff', 0.45)); g.addColorStop(1, t.col);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, rad * 0.76, 0, 7); ctx.fill();
+    const s = rad * 0.42;
+    ctx.save(); ctx.translate(x, y); ctx.strokeStyle = id === 'kiln' ? LEAD : '#fbf6ea'; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = Math.max(1.5, rad * 0.09); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (id === 'came') { for (const dx of [-0.6, 0, 0.6]) { ctx.moveTo(dx * s, -s); ctx.lineTo(dx * s, s); } ctx.stroke(); }
+    else if (id === 'rose') { for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; ctx.moveTo(Math.cos(a) * s * 0.62 + s * 0.32, Math.sin(a) * s * 0.62); ctx.arc(Math.cos(a) * s * 0.62, Math.sin(a) * s * 0.62, s * 0.32, 0, 7); } ctx.stroke(); }
+    else if (id === 'prism') { ctx.moveTo(0, -s); ctx.lineTo(s * 0.95, s * 0.7); ctx.lineTo(-s * 0.95, s * 0.7); ctx.closePath(); ctx.moveTo(-s * 1.2, -s * 0.1); ctx.lineTo(-s * 0.3, -s * 0.05); ctx.stroke(); }
+    else if (id === 'eye') { ctx.moveTo(-s, 0); ctx.quadraticCurveTo(0, -s * 1.1, s, 0); ctx.quadraticCurveTo(0, s * 1.1, -s, 0); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 0, s * 0.3, 0, 7); ctx.fill(); }
+    else if (id === 'steady') { const q = s * 0.62; for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) ctx.rect(dx * q * 0.85 - q * 0.6, dy * q * 0.85 - q * 0.6, q * 1.2, q * 1.2); ctx.stroke(); }
+    else if (id === 'tall') { ctx.moveTo(-s * 0.55, s); ctx.lineTo(-s * 0.55, -s * 0.2); ctx.quadraticCurveTo(-s * 0.5, -s * 0.8, 0, -s * 1.15); ctx.quadraticCurveTo(s * 0.5, -s * 0.8, s * 0.55, -s * 0.2); ctx.lineTo(s * 0.55, s); ctx.closePath(); ctx.stroke(); }
+    else if (id === 'kiln') { ctx.moveTo(0, -s * 1.1); ctx.quadraticCurveTo(s * 0.9, -s * 0.1, s * 0.6, s * 0.5); ctx.quadraticCurveTo(0, s * 1.2, -s * 0.6, s * 0.5); ctx.quadraticCurveTo(-s * 0.9, -s * 0.1, 0, -s * 1.1); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  // ---------- draw: window ----------
+  function drawBoard() {
+    const F = L.frame, cs = L.cs, lw = L.lw, w = cs - lw;
+    if (S.phase === 'finish' && S.mode === 'play') {
+      const k = Math.sin(Math.PI * clamp(S.pt / 1.2, 0, 1)), E = L.ext, cx = E.x + E.w / 2, cy = E.y + E.h / 2;
+      const g = ctx.createRadialGradient(cx, cy, 10, cx, cy, Math.max(E.w, E.h) * 0.9); g.addColorStop(0, rgba(GLOW, 0.8 * k)); g.addColorStop(1, rgba(GLOW, 0));
+      ctx.fillStyle = g; ctx.fillRect(cx - E.w * 1.2, cy - E.h, E.w * 2.4, E.h * 2);
+    }
+    ctx.drawImage(F.c, F.x0, F.y0, F.w, F.h);
+    for (let r = 0; r < ROWS(); r++) for (let c = 0; c < COLS(); c++) {
+      const v = board[r][c]; if (!v) continue;
+      const x = L.bx + c * cs + lw / 2, y = L.by + r * cs + lw / 2, age = T - v.pop;
+      const sp = sprite(v.c, v.v);
+      if (age < 0.09) { const d = w * (0.08 * (1 - age / 0.09)) / 2; ctx.drawImage(sp, x - d, y - d, w + 2 * d, w + 2 * d); }
+      else ctx.drawImage(sp, x, y, w, w);
+      if (age < 0.14) { ctx.strokeStyle = 'rgba(255,252,235,' + (0.95 * (1 - age / 0.14)) + ')'; ctx.lineWidth = Math.max(1.5, lw * 0.8); ctx.strokeRect(x - lw * 0.3, y - lw * 0.3, w + lw * 0.6, w + lw * 0.6); }
+    }
+    // cells being cleared: flash to glow
+    for (const q of clears) {
+      const x = L.bx + q.c * cs + lw / 2, y = L.by + q.r * cs + lw / 2, k = clamp(q.t / 0.26, 0, 1);
+      ctx.drawImage(sprite(q.cell.c, q.cell.v), x, y, w, w);
+      ctx.fillStyle = rgba(GLOW, 0.2 + 0.75 * k); ctx.fillRect(x, y, w, w);
+    }
+    // light beams sweeping along each cleared line
+    if (beams.length) {
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (const b of beams) {
+        const cells = b.l.cells, a = cells[0], z = cells[cells.length - 1], k = easeOut(b.t / 0.26), fade = 1 - clamp((b.t - 0.22) / 0.1, 0, 1);
+        const ax = L.bx + (a[1] + 0.5) * cs, ay = L.by + (a[0] + 0.5) * cs, zx = L.bx + (z[1] + 0.5) * cs, zy = L.by + (z[0] + 0.5) * cs;
+        const hx = lerp(ax - (zx - ax) * 0.1, zx, k), hy = lerp(ay - (zy - ay) * 0.1, zy, k);
+        const g = ctx.createLinearGradient(ax, ay, hx + 0.01, hy + 0.01); g.addColorStop(0, 'rgba(255,240,200,0)'); g.addColorStop(1, 'rgba(255,246,214,' + 0.85 * fade + ')');
+        ctx.strokeStyle = g; ctx.lineWidth = cs * 0.8; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(hx, hy); ctx.stroke();
+        const rg = ctx.createRadialGradient(hx, hy, 0, hx, hy, cs * 1.1); rg.addColorStop(0, 'rgba(255,255,240,' + fade + ')'); rg.addColorStop(1, 'rgba(255,240,200,0)');
+        ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(hx, hy, cs * 1.1, 0, 7); ctx.fill();
+      }
+      ctx.restore();
+    }
+    // ghost and line preview
+    const g = S.ghost;
+    if (g && S.phase === 'board') {
+      if (g.ok) {
+        if (g.lines && g.lines.length) {
+          const pulse = 0.22 + 0.1 * Math.sin(T * 9);
+          ctx.fillStyle = rgba(GOLD, pulse);
+          for (const l of g.lines) for (const [r, c] of l.cells) ctx.fillRect(L.bx + c * cs + lw / 2, L.by + r * cs + lw / 2, w, w);
+          ctx.strokeStyle = rgba(GOLD, 0.7); ctx.lineWidth = 2;
+          for (const l of g.lines) { const a = l.cells[0], z = l.cells[l.cells.length - 1]; ctx.strokeRect(L.bx + a[1] * cs, L.by + a[0] * cs, (z[1] - a[1] + 1) * cs, (z[0] - a[0] + 1) * cs); }
+        }
+        ctx.globalAlpha = 0.45;
+        for (const q of g.cells) ctx.drawImage(sprite(q.c, 0), L.bx + (g.ax + q.x) * cs + lw / 2, L.by + (g.ay + q.y) * cs + lw / 2, w, w);
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.strokeStyle = RUBY; ctx.lineWidth = 1.5;
+        for (const q of g.cells) { const r = g.ay + q.y, c = g.ax + q.x; if (r < 0 || c < 0 || r >= ROWS() || c >= COLS()) continue; ctx.strokeRect(L.bx + c * cs + lw / 2 + 1, L.by + r * cs + lw / 2 + 1, w - 2, w - 2); }
+      }
+    }
+    // window finished: every cell lights up
+    if (S.phase === 'finish' && S.mode === 'play') {
+      const k = Math.sin(Math.PI * clamp(S.pt / 1.2, 0, 1));
+      ctx.save(); outline(ctx); ctx.clip(); ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = rgba('#fff0b0', 0.3 * k); const E = L.ext; ctx.fillRect(E.x, E.y, E.w, E.h);
+      ctx.restore();
+    }
+    // run lost: grey out from the top down
+    if (S.phase === 'dying' || S.mode === 'over') {
+      const p = S.mode === 'over' ? 1 : easeOut(S.pt / 0.8), E = L.ext;
+      ctx.save(); outline(ctx); ctx.clip();
+      ctx.beginPath(); ctx.rect(E.x - 10, E.y - 10, E.w + 20, (E.h + 20) * p); ctx.clip();
+      ctx.globalCompositeOperation = 'saturation'; ctx.fillStyle = '#808080'; ctx.fillRect(E.x - 10, E.y - 10, E.w + 20, E.h + 20);
+      ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = 'rgba(40,36,48,.32)'; ctx.fillRect(E.x - 10, E.y - 10, E.w + 20, E.h + 20);
+      ctx.restore();
+    }
+  }
+  function drawTitleSweep() {
+    const k = (S.t - 2.4) % 3.4; if (S.t < 2.4 || k > 1.5) return;
+    const E = L.ext, p = k / 1.5, x = lerp(E.x - E.w * 0.8, E.x + E.w * 1.4, p);
+    ctx.save(); outline(ctx); ctx.clip(); ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createLinearGradient(x - 70, 0, x + 70, 0); g.addColorStop(0, 'rgba(255,230,160,0)'); g.addColorStop(0.5, 'rgba(255,236,170,.55)'); g.addColorStop(1, 'rgba(255,230,160,0)');
+    ctx.fillStyle = g; ctx.translate(x, E.y + E.h / 2); ctx.transform(1, 0, -0.45, 1, 0, 0); ctx.fillRect(-70, -E.h, 140, E.h * 2);
+    ctx.restore();
+  }
+
+  // ---------- draw: HUD ----------
+  const PETALS = ['ruby', 'amber', 'emerald', 'sapphire', 'amethyst', 'amber', 'ruby', 'sapphire'];
+  function drawMeter() {
+    const x = L.meterX, y = L.meterY, R = L.meterR;
+    const frac = S.phase === 'finish' ? 1 : clamp(S.lightShown / S.target, 0, 1), filled = frac * 8;
+    if (S.meterGlow > 0 || S.phase === 'finish') {
+      const k = Math.max(S.meterGlow, S.phase === 'finish' ? 0.8 : 0);
+      const g = ctx.createRadialGradient(x, y, R * 0.5, x, y, R * 1.9); g.addColorStop(0, rgba(GLOW, 0.75 * k)); g.addColorStop(1, rgba(GLOW, 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R * 1.9, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = STONE; ctx.beginPath(); ctx.arc(x, y, R + 6, 0, 7); ctx.fill();
+    ctx.strokeStyle = STONE_SH; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, R + 3, 0, 7); ctx.stroke();
+    ctx.fillStyle = LEAD; ctx.beginPath(); ctx.arc(x, y, R + 1, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3d3547'; ctx.beginPath(); ctx.arc(x, y, R - 1.5, 0, 7); ctx.fill();
+    for (let k = 0; k < 8; k++) {
+      const a = -Math.PI / 2 + k * Math.PI / 4, px = x + Math.cos(a) * R * 0.56, py = y + Math.sin(a) * R * 0.56;
+      const lit = clamp(filled - k, 0, 1);
+      ctx.save(); ctx.translate(px, py); ctx.rotate(a);
+      ctx.beginPath(); ctx.ellipse(0, 0, R * 0.36, R * 0.2, 0, 0, 7);
+      ctx.fillStyle = '#5a5064'; ctx.fill();
+      if (lit > 0) {
+        ctx.globalAlpha = lit; const base = GLASS[PETALS[k]].base;
+        const g = ctx.createRadialGradient(-R * 0.1, -R * 0.06, 0, 0, 0, R * 0.38); g.addColorStop(0, mix(base, '#ffffff', 0.45)); g.addColorStop(1, base);
+        ctx.fillStyle = g; ctx.fill(); ctx.globalAlpha = 1;
+      }
+      ctx.strokeStyle = LEAD; ctx.lineWidth = 2; ctx.stroke();
+      ctx.restore();
+    }
+    const cg = ctx.createRadialGradient(x - 2, y - 2, 0, x, y, R * 0.22);
+    cg.addColorStop(0, frac > 0 ? '#fffbe6' : '#8a8090'); cg.addColorStop(1, frac > 0 ? mix('#8a7a5a', GOLD, frac) : '#5a5064');
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(x, y, R * 0.2, 0, 7); ctx.fill();
+    ctx.strokeStyle = LEAD; ctx.lineWidth = 2; ctx.stroke();
+    txt(fmt(S.lightShown) + ' / ' + fmt(S.target), x, y + R + 24, 15, INK, 'center', 600);
+  }
+  function drawTopBar() {
+    const lx = L.lx, ty = L.topY;
+    txt('WINDOW', lx, ty + 24, 11, MUTED, 'left', 600, 0.22);
+    txt(roman(S.n), lx, ty + 56, 28, INK, 'left', 600, 0.12);
+    txt(fmt(S.total) + ' light', lx, ty + 78, 13, MUTED, 'left', 500);
+    let mx = lx + 7;
+    for (const t of TRACERIES) if (has(t.id)) { medallion(t.id, mx, ty + 96, 7); mx += 18; }
+    // cuts, as lead strips
+    const rx = W - 16;
+    txt('CUTS', rx, ty + 24, 11, MUTED, 'right', 600, 0.22);
+    const low = S.cuts <= 3;
+    txt(String(S.cuts), rx, ty + 56, 28, low ? RUBY : INK, 'right', 600);
+    const n = S.cutsMax, sw = 3, gap = 4, x0 = rx - (n * (sw + gap) - gap);
+    for (let k = 0; k < n; k++) {
+      ctx.fillStyle = k < S.cuts ? (low ? RUBY : LEAD) : 'rgba(36,33,43,.16)';
+      rr(x0 + k * (sw + gap), ty + 66, sw, 17, 1.5); ctx.fill();
+    }
+    drawMeter();
+  }
+  function drawTray() {
+    const y = L.trayY;
+    ctx.fillStyle = '#2c2833'; ctx.fillRect(0, y, W, H - y);
+    ctx.fillStyle = '#3c3744'; ctx.fillRect(0, y, W, 7);
+    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(0, y + 7, W, 2);
+    ctx.strokeStyle = 'rgba(255,255,255,.035)'; ctx.lineWidth = 1;
+    for (let k = 0; k < 5; k++) { ctx.beginPath(); ctx.moveTo(0, y + 26 + k * 24); ctx.lineTo(W, y + 30 + k * 24); ctx.stroke(); }
+    // sweep button
+    const sb = L.sweepBtn, can = S.sweeps > 0 && S.phase === 'board';
+    const pulse = S.jamHint ? 0.5 + 0.5 * Math.sin(T * 8) : 0;
+    ctx.fillStyle = S.jamHint ? mix('#3c3744', '#8a6a20', pulse) : '#3c3744'; rr(sb.x, sb.y, sb.w, sb.h, 10); ctx.fill();
+    ctx.save(); ctx.globalAlpha = can ? 1 : 0.35; ctx.translate(sb.x + sb.w / 2, sb.y + 40);
+    ctx.rotate(-0.5); ctx.fillStyle = '#b08a5a'; ctx.fillRect(-2, -18, 4, 20);
+    ctx.fillStyle = '#e8dcc0'; ctx.beginPath(); ctx.moveTo(-7, 2); ctx.lineTo(7, 2); ctx.lineTo(9, 16); ctx.lineTo(-9, 16); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#a89a80'; ctx.lineWidth = 1; for (const dx of [-4, 0, 4]) { ctx.beginPath(); ctx.moveTo(dx, 5); ctx.lineTo(dx * 1.3, 15); ctx.stroke(); }
+    ctx.restore();
+    for (let k = 0; k < S.sweepsMax; k++) { ctx.fillStyle = k < S.sweeps ? GOLD : 'rgba(255,255,255,.15)'; ctx.beginPath(); ctx.arc(sb.x + sb.w / 2 + (k - (S.sweepsMax - 1) / 2) * 12, sb.y + 76, 3.5, 0, 7); ctx.fill(); }
+    // deck button
+    const db = L.deckBtn, wob = S.shuffleT > 0 ? Math.sin(S.shuffleT * 20) * 3 * S.shuffleT : 0;
+    ctx.fillStyle = '#3c3744'; rr(db.x, db.y, db.w, db.h, 10); ctx.fill();
+    for (let k = 2; k >= 0; k--) { ctx.fillStyle = k === 0 ? '#efe7d6' : (k === 1 ? '#cfc4ad' : '#a89c86'); rr(db.x + 11 + k * 3 + (k === 0 ? wob : 0), db.y + 18 - k * 3, 20, 28, 4); ctx.fill(); }
+    ctx.fillStyle = RUBY; ctx.fillRect(db.x + 16 + wob, db.y + 26, 10, 10);
+    ctx.fillStyle = LEAD; ctx.fillRect(db.x + 16 + wob, db.y + 31, 10, 1.5); ctx.fillRect(db.x + 20.5 + wob, db.y + 26, 1.5, 10);
+    txt(String(S.draw.length), db.x + db.w / 2, db.y + 80, 15, '#efe7d6', 'center', 600);
+    // hand
+    const slots = slotRects();
+    for (let i = 0; i < slots.length; i++) {
+      const r = slots[i], k = S.hand[i];
+      ctx.fillStyle = 'rgba(0,0,0,.28)'; rr(r.x, r.y, r.w, r.h, 10); ctx.fill();
+      if (!k) continue;
+      if (drag && drag.i === i && drag.moved) continue;
+      if (ret && ret.i === i) continue;
+      const a = easeBack(k.appear), sel = i === S.sel && S.phase === 'board' && !S.demo;
+      ctx.save();
+      ctx.globalAlpha = clamp(k.appear * 1.5, 0, 1);
+      ctx.translate(r.x + r.w / 2, r.y + r.h / 2 + (1 - a) * 40);
+      if (drag && drag.i === i && !drag.moved) ctx.scale(0.96, 0.96);
+      ctx.translate(-r.w / 2, -r.h / 2);
+      slab(0, 0, r.w, r.h, sel);
+      const s = pieceFit(k.cells, r.w, r.h, 22);
+      ctx.save(); ctx.translate(r.w / 2, r.h / 2);
+      if (k.spin > 0) ctx.rotate(-Math.PI / 2 * easeOut(k.spin));
+      if (k.wig > 0) ctx.rotate(Math.sin(k.wig * 18) * 0.12 * k.wig);
+      drawPiece(k.cells, 0, 0, s);
+      ctx.restore();
+      specialMark(k, r.w - 11, 11);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+    // card sliding back after a missed drop
+    if (ret && S.hand[ret.i]) {
+      const k = S.hand[ret.i], r = slots[ret.i], e = easeOut(ret.t), s0 = ret.scale, s1 = pieceFit(k.cells, r.w, r.h, 22);
+      if (r) drawPiece(k.cells, lerp(ret.x, r.x + r.w / 2, e), lerp(ret.y, r.y + r.h / 2, e), lerp(s0, s1, e), 0.95);
+    }
+  }
+  function drawDrag() {
+    if (!drag || !drag.moved || S.phase !== 'board') return;
+    const k = S.hand[drag.i]; if (!k) return;
+    const r = slotRects()[drag.i], g = easeOut(drag.t), s1 = L.cs * 1.02, s0 = r ? pieceFit(k.cells, r.w, r.h, 22) : s1;
+    const off = drag.tray ? pieceOffset(k.cells) : 0, size = lerp(s0, s1, g);
+    const cx = drag.x, cy = drag.y - off * g;
+    if (!drag.tray) return; // touching the window: the ghost alone shows the spot
+    ctx.save(); ctx.shadowColor = 'rgba(30,20,10,.35)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 8;
+    const bb = bbox(k.cells); ctx.fillStyle = 'rgba(0,0,0,0)';
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = 0.25; ctx.fillStyle = '#2a2018';
+    for (const q of k.cells) ctx.fillRect(cx - bb.w * size / 2 + q.x * size + 6, cy - bb.h * size / 2 + q.y * size + 10, size, size);
+    ctx.restore();
+    drawPiece(k.cells, cx, cy, size, 0.96);
+  }
+
+  // ---------- draw: effects ----------
+  function drawFx() {
+    for (const p of parts) {
+      ctx.globalAlpha = clamp(p.life / 0.4, 0, 1); ctx.fillStyle = p.col;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.beginPath(); ctx.moveTo(-p.s, -p.s * 0.6); ctx.lineTo(p.s, -p.s * 0.2); ctx.lineTo(-p.s * 0.2, p.s); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    for (const m of motes) {
+      if (m.t < 0) continue;
+      const t = easeOut(m.t), cx = lerp(m.x0, m.x1, 0.5) + (m.x0 < m.x1 ? -40 : 40), cy = Math.min(m.y0, m.y1) - 70;
+      const x = (1 - t) * (1 - t) * m.x0 + 2 * (1 - t) * t * cx + t * t * m.x1, y = (1 - t) * (1 - t) * m.y0 + 2 * (1 - t) * t * cy + t * t * m.y1;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 10); g.addColorStop(0, 'rgba(255,252,235,.95)'); g.addColorStop(0.35, m.col); g.addColorStop(1, rgba(m.col.length === 7 ? m.col : '#ffffff', 0));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 10, 0, 7); ctx.fill();
+    }
+    for (const p of pops) {
+      const k = p.t / p.life, a = k > 0.7 ? 1 - (k - 0.7) / 0.3 : 1, s = easeBack(Math.min(1, p.t / 0.18));
+      const y = p.y - 46 * easeOut(k);
+      ctx.save(); ctx.globalAlpha = a; ctx.translate(p.x, y); ctx.scale(s, s);
+      const size = p.big ? 28 : 16;
+      ctx.font = '700 ' + size + 'px ' + SERIF; ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(244,238,224,.95)'; ctx.lineWidth = 5; ctx.strokeText(p.text, 0, 0);
+      ctx.fillStyle = p.big ? INK : MUTED; ctx.fillText(p.text, 0, 0);
+      if (p.sub) {
+        ctx.font = '700 11px ' + SERIF; const tw = ctx.measureText(p.sub).width + p.sub.length * 1.6 + 16;
+        ctx.fillStyle = 'rgba(42,37,48,.85)'; rr(-tw / 2, 8, tw, 20, 10); ctx.fill();
+        txt(p.sub, 0, 22, 11, GLOW, 'center', 700, 0.15);
+      }
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+  function drawRays() {
+    const r = S.rays; if (!r) return;
+    const k = r.t / r.dur, a = Math.sin(Math.PI * clamp(k, 0, 1));
+    ctx.save();
+    if (r.kind === 'combo') {
+      ctx.fillStyle = 'rgba(255,246,210,' + 0.32 * a + ')';
+      for (let i = 0; i < 6; i++) { const x = -W * 0.4 + i * W * 0.3 + k * 80, w = 30 + (i % 3) * 18; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + w, 0); ctx.lineTo(x + w + H * 0.55, H); ctx.lineTo(x + H * 0.55, H); ctx.closePath(); ctx.fill(); }
+    } else {
+      const E = L.ext, y0 = E.y + E.h * 0.62, cols = ['ruby', 'amber', 'emerald', 'sapphire', 'amethyst', 'amber', 'ruby'];
+      const drop = (H - y0) * easeOut(k * 1.6);
+      for (let i = 0; i < 7; i++) {
+        const x = E.x + (i / 7) * E.w, w = E.w / 7 * 0.8, sh = (i - 3) * 22 + 40;
+        const g = ctx.createLinearGradient(0, y0, 0, y0 + drop + 1); g.addColorStop(0, rgba(GLASS[cols[i]].base, 0)); g.addColorStop(0.25, rgba(GLASS[cols[i]].base, 0.26 * a)); g.addColorStop(1, rgba(GLASS[cols[i]].base, 0.08 * a));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x + w, y0); ctx.lineTo(x + w + sh, y0 + drop); ctx.lineTo(x + sh, y0 + drop); ctx.closePath(); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+  function drawDust() {
+    for (const d of dust) {
+      ctx.globalAlpha = 0.1 + 0.05 * Math.sin(d.p * 1.3);
+      ctx.fillStyle = '#fffbe8'; ctx.beginPath(); ctx.arc(d.x * W, d.y * H * 0.8, d.r, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  function plaque(x, y, w, h) {
+    ctx.save(); ctx.shadowColor = 'rgba(40,30,20,.35)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 6;
+    ctx.fillStyle = 'rgba(244,238,224,.96)'; rr(x, y, w, h, 14); ctx.fill(); ctx.restore();
+    ctx.strokeStyle = LEAD; ctx.lineWidth = 2; rr(x + 4, y + 4, w - 8, h - 8, 11); ctx.stroke();
+  }
+  function drawBanner() {
+    if (S.banner <= 0 || S.phase !== 'board') return;
+    const a = Math.min(1, S.banner / 0.4) * Math.min(1, (1.9 - S.banner) / 0.15 + 0.2);
+    const E = L.ext, cy = E.y + E.h * 0.42, w = Math.min(290, W - 40);
+    ctx.save(); ctx.globalAlpha = clamp(a, 0, 1);
+    plaque(W / 2 - w / 2, cy - 46, w, 92);
+    txt('WINDOW ' + roman(S.n), W / 2, cy - 4, 26, INK, 'center', 600, 0.18);
+    txt(WINDOWS[S.shapeIdx].name + ' · ' + fmt(S.target) + ' light in ' + S.cutsMax + ' cuts', W / 2, cy + 24, 14, MUTED, 'center', 500, 0, true);
+    ctx.restore();
+  }
+  function drawHint() {
+    let s = null, strong = false;
+    if (S.phase === 'board' && S.jamHint) { s = 'Nothing fits. Sweep the bench.'; strong = true; }
+    else if (S.phase === 'board' && S.n === 1 && S.firstRun && S.banner < 0.6) s = ['Drag a pane into the window', 'Tap a pane to turn it', 'Fill a row or column to let the light in', 'Same colour lines shine brighter'][S.hintStep] || null;
+    if (!s) return;
+    ctx.font = 'italic 500 14px ' + SERIF;
+    const w = ctx.measureText(s).width + 30, y = L.hintY;
+    const a = strong ? 0.85 + 0.15 * Math.sin(T * 8) : 0.92;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = strong ? 'rgba(42,37,48,.9)' : 'rgba(244,238,224,.92)'; rr(W / 2 - w / 2, y - 15, w, 30, 15); ctx.fill();
+    if (!strong) { ctx.strokeStyle = 'rgba(42,37,48,.25)'; ctx.lineWidth = 1; rr(W / 2 - w / 2, y - 15, w, 30, 15); ctx.stroke(); }
+    txt(s, W / 2, y + 5, 14, strong ? GLOW : INK, 'center', 500, 0, true);
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- draw: screens ----------
+  function stoneScreen(a) {
+    ctx.save(); ctx.globalAlpha = a;
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#d9cdb5'); g.addColorStop(1, '#c7b898');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(120,100,70,.18)'; ctx.lineWidth = 1.5;
+    for (let y = 40, k = 0; y < H; y += 64, k++) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); for (let x = (k % 2 ? 30 : 110); x < W; x += 160) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 64); ctx.stroke(); } }
+    ctx.restore();
+  }
+  function deckStrip(y) {
+    const count = {}; let specials = 0;
+    for (const k of S.deck) { if (k.special) specials++; else count[k.color] = (count[k.color] || 0) + 1; }
+    const items = PANE_COLORS.filter((c) => count[c]).map((c) => [c, count[c]]);
+    if (specials) items.push(['sun', specials]);
+    const iw = 38, tot = items.length * iw, x0 = W / 2 - tot / 2;
+    txt('YOUR DECK · ' + S.deck.length + ' PANES', W / 2, y, 11, MUTED, 'center', 600, 0.2);
+    items.forEach(([c, n], i) => {
+      const x = x0 + i * iw + 4;
+      ctx.fillStyle = LEAD; ctx.fillRect(x - 1, y + 10, 16, 16);
+      ctx.drawImage(sprite(c, 0), x + 1, y + 12, 12, 12);
+      txt(String(n), x + 20, y + 23, 13, INK, 'left', 600);
+    });
+  }
+  function drawWorkshop() {
+    const a = clamp(S.pt / 0.25, 0, 1);
+    stoneScreen(a);
+    ctx.save(); ctx.globalAlpha = a;
+    const tr = S.offers[0] && S.offers[0].type === 'tracery';
+    const wy = wsTop();
+    txt(tr ? 'CHOOSE A TRACERY' : 'THE WORKSHOP', W / 2, wy + 74, Math.min(26, W / 15), INK, 'center', 600, 0.18);
+    txt('Window ' + roman(S.n) + ' is lit · ' + fmt(S.total) + ' light', W / 2, wy + 102, 14, MUTED, 'center', 500, 0, true);
+    deckStrip(wy + 136);
+    const rects = offerRects();
+    S.offers.forEach((o, i) => {
+      const r = rects[i], pop = easeBack(clamp((S.pt - 0.1 - i * 0.08) / 0.3, 0, 1));
+      let sc = pop; if (S.chosen === i) sc *= 1 + 0.08 * Math.sin(Math.min(1, S.ct / 0.3) * Math.PI);
+      const fade = S.chosen >= 0 && S.chosen !== i ? 1 - clamp(S.ct / 0.3, 0, 0.7) : 1;
+      ctx.save(); ctx.globalAlpha = a * fade * clamp(pop * 2, 0, 1);
+      ctx.translate(r.x + r.w / 2, r.y + r.h / 2); ctx.scale(sc, sc); ctx.translate(-r.w / 2, -r.h / 2);
+      ctx.save(); ctx.shadowColor = 'rgba(50,38,20,.35)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 8;
+      ctx.fillStyle = S.chosen === i ? '#fff8e4' : '#f1e9d8'; rr(0, 0, r.w, r.h, 12); ctx.fill(); ctx.restore();
+      ctx.strokeStyle = S.chosen === i ? GOLD : 'rgba(42,37,48,.35)'; ctx.lineWidth = S.chosen === i ? 3 : 1.5; rr(4, 4, r.w - 8, r.h - 8, 9); ctx.stroke();
+      let name = '', desc = '';
+      if (o.type === 'pane') {
+        const s = pieceFit(o.card.cells, r.w - 8, r.h - 60, 24);
+        drawPiece(o.card.cells, r.w / 2, (r.h - 40) / 2 + 6, s);
+        specialMark(o.card, r.w - 16, 16);
+        name = cardName(o.card); desc = cardDesc(o.card);
+      } else if (o.type === 'tracery') {
+        medallion(o.id, r.w / 2, (r.h - 40) / 2 + 4, Math.min(r.w * 0.36, 40));
+        const t = TRACERIES.find((q) => q.id === o.id); name = t.name; desc = t.desc;
+      } else {
+        const cx = r.w / 2, cy = (r.h - 40) / 2 + 6, s = Math.min(26, r.w * 0.22);
+        ctx.fillStyle = LEAD; ctx.fillRect(cx - s - 2, cy - s - 2, 2 * s + 4, 2 * s + 4);
+        ctx.drawImage(sprite('amethyst', 1), cx - s, cy - s, 2 * s, 2 * s);
+        ctx.strokeStyle = '#f4eee0'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(cx - s * 0.7, cy - s * 0.8); ctx.lineTo(cx - s * 0.05, cy - s * 0.1); ctx.lineTo(cx + s * 0.25, cy + s * 0.3); ctx.lineTo(cx + s * 0.8, cy + s * 0.7); ctx.moveTo(cx - s * 0.05, cy - s * 0.1); ctx.lineTo(cx + s * 0.7, cy - s * 0.5); ctx.stroke();
+        name = 'Remove a card'; desc = 'Break down a pane you do not want';
+      }
+      const nl = wrap(name, r.w - 14, 13);
+      nl.slice(0, 2).forEach((s, j) => txt(s, r.w / 2, r.h - 30 + j * 15 - (nl.length > 1 ? 7 : 0), 13, INK, 'center', 700));
+      ctx.restore();
+      ctx.save(); ctx.globalAlpha = a * fade * clamp(pop * 2, 0, 1);
+      wrap(desc, r.w + 4, 12).slice(0, 3).forEach((s, j) => txt(s, r.x + r.w / 2, r.y + r.h + 22 + j * 15, 12, MUTED, 'center', 500, 0, true));
+      ctx.restore();
+    });
+    const k = keepRect();
+    ctx.globalAlpha = a * (S.chosen >= 0 && S.chosen !== 9 ? 0.4 : 1);
+    ctx.fillStyle = '#2c2833'; rr(k.x, k.y, k.w, k.h, 24); ctx.fill();
+    ctx.strokeStyle = '#3c3744'; ctx.lineWidth = 2; rr(k.x + 3, k.y + 3, k.w - 6, k.h - 6, 21); ctx.stroke();
+    txt('KEEP MY DECK', W / 2, k.y + 30, 14, '#efe7d6', 'center', 600, 0.18);
+    ctx.globalAlpha = a;
+    txt('Next: Window ' + roman(S.n + 1) + ' · ' + WINDOWS[S.n % 3].name + ' · ' + fmt(Math.round(160 * Math.pow(1.3, S.n) / 10) * 10) + ' light', W / 2, k.y + k.h + 34, 13, MUTED, 'center', 500, 0, true);
+    ctx.restore();
+  }
+  function drawRemove() {
+    stoneScreen(1);
+    txt('REMOVE A CARD', W / 2, L.st + 74, Math.min(26, W / 15), INK, 'center', 600, 0.18);
+    txt('Tap a pane to break it down. Tap elsewhere to go back.', W / 2, L.st + 102, 13, MUTED, 'center', 500, 0, true);
+    txt(S.deck.length + ' panes in your deck', W / 2, L.st + 130, 12, MUTED, 'center', 600, 0.1);
+    for (const r of remRects()) cardSlab(r.card, r, false);
+  }
+  function drawSheet() {
+    ctx.fillStyle = 'rgba(36,33,43,.96)'; ctx.fillRect(0, 0, W, H);
+    let y = L.st + 76;
+    txt('YOUR DECK · ' + S.deck.length + ' PANES', W / 2, y, 20, '#efe7d6', 'center', 600, 0.16);
+    const sec = (label, list) => {
+      y += 34; txt(label + ' (' + list.length + ')', W / 2, y, 12, '#b9ad98', 'center', 600, 0.2); y += 12;
+      const rects = gridRects(list, y);
+      for (const r of rects) cardSlab(r.card, r, false);
+      if (rects.length) y = rects[rects.length - 1].y + rects[rects.length - 1].h; else y += 6;
+    };
+    sec('ON THE BENCH', S.hand.filter(Boolean));
+    sec('TO DRAW', S.draw.slice().reverse());
+    sec('SET ASIDE', S.discard);
+    txt('Tap anywhere to close', W / 2, Math.min(H - L.sb - 24, y + 40), 14, '#b9ad98', 'center', 500, 0, true);
+  }
+  function drawTitle() {
+    const ts = Math.min(34, (W - 40) / 10.2), a = clamp(S.t / 0.6, 0, 1);
+    ctx.globalAlpha = a;
+    txt('GLASSWRIGHT', W / 2, L.topY + 78, ts, INK, 'center', 600, 0.18);
+    txt('Draft your panes. Fill the window.', W / 2, L.topY + 104, 15, MUTED, 'center', 500, 0, true);
+    ctx.globalAlpha = 1;
+    const y = L.trayY + 24;
+    ctx.globalAlpha = 0.6 + 0.4 * Math.sin(S.t * 3.5);
+    txt('Tap to begin', W / 2, y + 12, 22, INK, 'center', 600, 0.06);
+    ctx.globalAlpha = 1;
+    const best = kit.best(), bw = getBW();
+    if (best > 0) {
+      txt('BEST LIGHT  ' + fmt(best) + '   ·   BEST WINDOW  ' + roman(Math.max(1, bw)), W / 2, y + 46, 12, MUTED, 'center', 600, 0.12);
+    } else txt('Fill rows and columns with glass to let the light in', W / 2, y + 46, 13, MUTED, 'center', 500, 0, true);
+  }
+  function drawOver() {
+    const k = clamp(S.ot / 0.35, 0, 1), e = easeBack(k);
+    ctx.fillStyle = 'rgba(36,33,43,' + 0.35 * k + ')'; ctx.fillRect(0, 0, W, H);
+    const cw = Math.min(320, W - 40), ch = 300, cx = (W - cw) / 2, cy = H * 0.5 - ch / 2 - 20;
+    ctx.save(); ctx.globalAlpha = k; ctx.translate(W / 2, cy + ch / 2); ctx.scale(0.9 + 0.1 * e, 0.9 + 0.1 * e); ctx.translate(-W / 2, -(cy + ch / 2));
+    plaque(cx, cy, cw, ch);
+    txt('THE LIGHT FADES', W / 2, cy + 50, Math.min(22, cw / 13), INK, 'center', 600, 0.18);
+    txt(S.cause === 'jam' ? 'Nothing on the bench would fit.' : 'The cuts ran out before the window was lit.', W / 2, cy + 76, 13, MUTED, 'center', 500, 0, true);
+    txt('WINDOW', W / 2, cy + 112, 11, MUTED, 'center', 600, 0.22);
+    txt(roman(S.n), W / 2, cy + 148, 36, RUBY, 'center', 600, 0.12);
+    txt(fmt(S.total) + ' light', W / 2, cy + 184, 20, INK, 'center', 600);
+    if (S.newBest) { ctx.fillStyle = GOLD; rr(W / 2 - 44, cy + 194, 88, 20, 10); ctx.fill(); txt('NEW BEST', W / 2, cy + 208, 10, INK, 'center', 700, 0.2); }
+    txt('BEST ' + fmt(kit.best()) + '  ·  BEST WINDOW ' + roman(Math.max(1, getBW())), W / 2, cy + 236, 11, MUTED, 'center', 600, 0.12);
+    if (S.ot > 0.35) { ctx.globalAlpha = k * (0.6 + 0.4 * Math.sin(S.ot * 4)); txt('Tap to begin a new window', W / 2, cy + 272, 16, INK, 'center', 600, 0, true); }
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.drawImage(L.backdrop, 0, 0, W, H);
+    const inWorkshop = S.mode === 'play' && (S.phase === 'workshop' || S.phase === 'remove');
+    if (!inWorkshop || S.pt < 0.25) {
+      ctx.save();
+      if (S.shake > 0) ctx.translate((Math.random() - 0.5) * S.shake, (Math.random() - 0.5) * S.shake);
+      drawBoard();
+      if (S.mode === 'title') drawTitleSweep();
+      ctx.restore();
+      drawDust();
+      if (S.mode === 'title') drawTitle();
+      else {
+        drawTopBar();
+        drawTray();
+        drawRays();
+        drawFx();
+        drawDrag();
+        drawBanner();
+        drawHint();
+      }
+    }
+    if (inWorkshop) { if (S.phase === 'workshop') drawWorkshop(); else drawRemove(); drawFx(); }
+    if (S.sheet && S.mode === 'play') drawSheet();
+    if (S.mode === 'over') drawOver();
+    if (S.mode === 'paused') {
+      ctx.fillStyle = 'rgba(36,33,43,.6)'; ctx.fillRect(0, 0, W, H);
+      txt('PAUSED', W / 2, H / 2 - 6, 26, '#efe7d6', 'center', 600, 0.2);
+      txt('Tap to carry on', W / 2, H / 2 + 24, 15, '#cfc4ad', 'center', 500, 0, true);
+    }
+  }
+
+  // ---------- loop ----------
+  ctx = kit.fitCanvas(cv, (s) => { W = s.w; H = s.h; DPR = s.dpr; layout(); });
+  enterTitle();
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, Math.max(0, (now - last) / 1000)); last = now;
+    if (S.mode !== 'paused') update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // test hook for scripts/playtest.mjs and scripts/shoot.mjs (the workshop reports as "play")
+  window.__game = {
+    state: () => ({ mode: S.mode, score: Math.round(S.total), window: S.n, cuts: S.cuts, target: S.target, light: S.light, phase: S.phase }),
+    demo: (on) => { S.demo = !!on; S.demoT = 0.4; if (!on && drag && drag.demo) { drag = null; S.ghost = null; S.dm = null; } },
+    dbg: () => ({ deck: S.deck.length, owned: [...S.owned], hand: S.hand.map((k) => k && cardName(k)), draw: S.draw.length, discard: S.discard.length, sweeps: S.sweeps, jam: S.jamHint })
+  };
+})();
+</script>
+</body>
+</html>

@@ -38,5 +38,15 @@
         "slug": "griddlewise",
         "status": "built",
         "why": "QA passed"
+    },
+    {
+        "date": "2026-10-31",
+        "trend": "block puzzle + roguelike deck-builder",
+        "evidence": "Scout: AppMagic H1 2026 block puzzle releases +89% YoY; Mobi.gg Oct 2026 deck-builder picks (no chart snapshots available)",
+        "concept": "Stained glass block puzzle where pieces come from a deck you build between windows; arched boards, colour-purity scoring, lasting boons",
+        "name": "Glasswright",
+        "slug": "glasswright",
+        "status": "built",
+        "why": "QA passed"
     }
 ]
