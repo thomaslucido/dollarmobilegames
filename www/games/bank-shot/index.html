@@ -85,6 +85,20 @@ canvas{ display:block; touch-action:none; border-radius:16px; }
 #go:focus-visible,#restart:focus-visible,#back:focus-visible{ outline:3px solid var(--cardInk); outline-offset:3px; }
 #lvls,#lvback{ width:100%; margin-top:8px; border:0; background:transparent; color:var(--cardMuted); font:inherit; font-weight:800; font-size:14px; padding:8px; cursor:pointer; }
 #lvls:focus-visible,#lvback:focus-visible,.lv:focus-visible{ outline:3px solid var(--cardInk); outline-offset:2px; }
+#rightBtns{ display:flex; align-items:center; gap:6px; }
+#gear{ width:32px; height:32px; display:flex; align-items:center; justify-content:center; background:transparent; border:1px solid var(--line); color:var(--ink); border-radius:999px; padding:0; cursor:pointer; }
+#gear:focus-visible{ outline:2px solid var(--ink); outline-offset:2px; }
+.setlbl{ font-size:11px !important; font-weight:800; letter-spacing:1.2px; text-transform:uppercase; margin:4px 0 8px !important; }
+#thgrid{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:0 0 16px; }
+.th{ display:flex; align-items:center; gap:7px; justify-content:center; border:1px solid var(--line); background:transparent; color:var(--cardInk); border-radius:12px; padding:9px 4px; font:inherit; font-size:13px; font-weight:800; cursor:pointer; }
+.th i{ width:11px; height:11px; border-radius:50%; display:block; flex:none; }
+.th.cur{ border:2px solid var(--swatch); padding:8px 3px; }
+.setbtn{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid var(--line); background:transparent; color:var(--cardInk); border-radius:14px; padding:13px 14px; font:inherit; font-size:15px; font-weight:800; cursor:pointer; margin:0 0 8px; text-align:left; }
+.setbtn small{ font-weight:600; font-size:12px; color:var(--cardMuted); }
+.setbtn.danger{ color:#ff5d73; border-color:rgba(255,93,115,.45); }
+#go.danger{ background:#e5484d; color:#fff; box-shadow:none; }
+.setnote{ font-size:12px !important; margin:2px 0 10px !important; }
+.th:focus-visible,.setbtn:focus-visible{ outline:3px solid var(--cardInk); outline-offset:2px; }
 #overlay.wide{ width:90%; max-width:360px; }
 #overlay.wide h2{ font-size:24px; }
 #overlay.wide p{ font-size:13px; margin-bottom:12px; }
@@ -100,7 +114,7 @@ canvas{ display:block; touch-action:none; border-radius:16px; }
 <body>
 <div id="app">
   <header id="hud">
-    <div class="row"><button id="roundLbl" type="button" aria-label="Choose level">Level 1 &#9662;</button><span id="scoreWrap"><span id="score">0</span><span id="mult" hidden>&times;1</span></span><button id="theme" type="button" aria-label="Change theme"><i></i><span id="themeName">Neon</span></button></div>
+    <div class="row"><button id="roundLbl" type="button" aria-label="Choose level">Level 1 &#9662;</button><span id="scoreWrap"><span id="score">0</span><span id="mult" hidden>&times;1</span></span><span id="rightBtns"><button id="theme" type="button" aria-label="Change theme"><i></i><span id="themeName">Neon</span></button><button id="gear" type="button" aria-label="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button></span></div>
     <div class="row2"><span id="tnum">15.0s</span><div id="bar"><div id="barfill"></div></div><div id="shots" aria-label="Shots left"></div></div>
   </header>
   <div id="stage">
@@ -335,6 +349,18 @@ function haptic(ms){
 }
 function nativeStatusBar(dark){ if(SBar) swallow(pcall(SBar,'setStyle',{style:dark?'DARK':'LIGHT'})); }
 
+/* ---------- Game Center (iPhone only). A small native plugin in the app ("GameCenter") signs the
+   player in, posts the best run score and shows Apple's leaderboard screen. Anywhere else this is a no-op. */
+var LB_ID='bankshot.best';
+var IOS=false; try{ IOS=NATIVE&&typeof CAP.getPlatform==='function'&&CAP.getPlatform()==='ios'; }catch(e){}
+var GC=IOS?{_raw:'GameCenter'}:null, gcOK=false;
+function gcAuth(){
+  if(!GC) return;
+  Promise.resolve(pcall(GC,'authenticate')).then(function(r){ gcOK=!!(r&&r.authenticated); if(gcOK&&best>0) gcSubmit(best); }).catch(function(){ gcOK=false; });
+}
+function gcSubmit(v){ if(GC&&gcOK&&v>0) swallow(pcall(GC,'submitScore',{leaderboardId:LB_ID,score:v|0})); }
+function gcShow(){ if(!GC) return null; return pcall(GC,'showLeaderboard',{leaderboardId:LB_ID}); }
+
 /* ---------- themes ---------- */
 var THEMES=[
  { name:'Neon',
@@ -372,7 +398,33 @@ var THEMES=[
    hole0:'#23222b', hole1:'#23222b', holeRing:'#23222b', halo:'rgba(224,85,59,', pole:'#23222b', flag:'#e0553b',
    ball:['#7a7988','#2b2a33','#15141a'], ballGlow:null, trail:'35,34,43', aim:'35,34,43',
    band:'#23222b', bandGlow:null, post:'#fbf8f0', postStroke:'#23222b', stem:'rgba(35,34,43,.45)', stemW:3,
-   sline:'rgba(35,34,43,.18)', pWall:'#23222b', pBump:'#e0553b', pPower:'#23222b', pChute:'#23222b', pS1:'#e0553b', pS2:'#23222b' }
+   sline:'rgba(35,34,43,.18)', pWall:'#23222b', pBump:'#e0553b', pPower:'#23222b', pChute:'#23222b', pS1:'#e0553b', pS2:'#23222b' },
+ { name:'Harvest',
+   css:{'--page':'#1f120c','--bg2':'#3a2116','--ink':'#fbeedd','--muted':'#c7a88a','--track':'#3b2418','--card':'rgba(36,20,13,.92)','--cardInk':'#fbeedd','--cardMuted':'#e2c9ae','--line':'rgba(255,230,200,.16)','--btnBg':'linear-gradient(135deg,#ffb347,#ff7a3d)','--btnInk':'#2a1206','--btnGlow':'none','--shot':'#fbeedd','--shotUsed':'#5a3a28','--fill':'linear-gradient(90deg,#d9822b,#ffc15e)','--fillShadow':'none','--low':'#d1495b','--lowShadow':'none','--display':"'Fraunces',Georgia,serif",'--swatch':'#e8833a','--multBg':'#ffc15e','--multInk':'#2a1206'},
+   glow:false, shadow:true, frame:'#2a170f', frameLines:null, t1:'#5a3320', t2:'#3e2216', stripes:0, grid:'rgba(255,214,170,.07)',
+   rail:'#c9772f', railW:3, wall:'#f0d7b5', wallMove:'#ff9f45', wallEdge:'#8a5a33',
+   bBody:'#7a2230', bRing:'#e8833a', bCore:'#ffd08a', bFlash:'#fff1c9', bHalo:null, bW:5,
+   pwBody:'#3d5a1e', pwRing:'#b5d36b', pwCore:'#f4ffd0', pwHalo:null,
+   rpRGB:'217,160,255', rpBody:'#4a2a5e', rpRing:'#d9a0ff', rpCore:'#fbefff', pRep:'#e3b5ff',
+   sq:'#ffc15e', sqRGB:'255,193,94', ch:'#fbeedd', chRGB:'251,238,221',
+   hole0:'#120a06', hole1:'#120a06', holeRing:'#e8c99a', halo:'rgba(255,200,140,', pole:'#fbeedd', flag:'#d1495b',
+   ball:['#fffaf0','#f2dcc0','#c9a27a'], ballGlow:null, trail:'255,220,180', aim:'255,214,160',
+   band:'#d1495b', bandGlow:null, post:'#3e2216', postStroke:'#c9772f', stem:'#8a5a33', stemW:7,
+   sline:'rgba(255,220,180,.2)', pWall:'#f0d7b5', pBump:'#ffb347', pPower:'#b5d36b', pChute:'#fbeedd', pS1:'#ffc15e', pS2:'#d1495b',
+   deco:'leaves' },
+ { name:'Holiday',
+   css:{'--page':'#06140f','--bg2':'#0f2a1f','--ink':'#f4f7f2','--muted':'#9fbfae','--track':'#123326','--card':'rgba(8,24,18,.88)','--cardInk':'#f4f7f2','--cardMuted':'#cfe2d6','--line':'rgba(255,255,255,.14)','--btnBg':'linear-gradient(135deg,#ff5a5f,#d7263d)','--btnInk':'#ffffff','--btnGlow':'0 0 22px rgba(255,90,95,.45)','--shot':'#ffffff','--shotUsed':'#2a4a3b','--fill':'linear-gradient(90deg,#2fbf71,#a8f0c6)','--fillShadow':'0 0 10px rgba(47,191,113,.6)','--low':'linear-gradient(90deg,#ff2f4d,#ff6b6b)','--lowShadow':'0 0 10px rgba(255,60,80,.7)','--display':"'Bowlby One',system-ui,sans-serif",'--swatch':'#ff5a5f','--multBg':'#ffd75e','--multInk':'#2a1b00'},
+   glow:true, shadow:false, frame:'#06140f', frameLines:null, t1:'#0f3324', t2:'#081d15', stripes:0, grid:null,
+   rail:'rgba(255,215,94,.7)', railW:2, wall:'#f4f7f2', wallMove:'#ff5a5f', wallEdge:null,
+   bBody:'#2a0a10', bRing:'#ff3b4e', bCore:'#ff3b4e', bFlash:'#ffffff', bHalo:'rgba(255,59,78,', bW:3,
+   pwBody:'#08240f', pwRing:'#3ee07a', pwCore:'#3ee07a', pwHalo:'rgba(62,224,122,',
+   rpRGB:'150,200,255', rpBody:'#0b1a36', rpRing:'#bcd8ff', rpCore:'#ffffff', pRep:'#bcd8ff',
+   sq:'#ffd75e', sqRGB:'255,215,94', ch:'#ffffff', chRGB:'255,255,255',
+   hole0:'#000', hole1:'#03140c', holeRing:'#ffd75e', halo:'rgba(255,215,94,', pole:'rgba(255,255,255,.9)', flag:'#ff3b4e',
+   ball:['#ffffff','#f0f4ff','#b8c8e8'], ballGlow:'rgba(255,255,255,.9)', trail:'255,255,255', aim:'255,215,94',
+   band:'rgba(255,240,240,.95)', bandGlow:'#ff5a5f', post:'#081d15', postStroke:'#ffd75e', stem:'rgba(255,215,94,.35)', stemW:3,
+   sline:'rgba(255,255,255,.14)', pWall:'#ffffff', pBump:'#ff6b7a', pPower:'#3ee07a', pChute:'#ffffff', pS1:'#ffd75e', pS2:'#ff3b4e',
+   deco:'snow' }
 ];
 var themeIdx=0, T=THEMES[0];
 
@@ -461,7 +513,7 @@ function loadState(){
 }
 function saveProgress(){ if(mainSave) return; sset('bankshot-progress',JSON.stringify({round:round,score:score,sq:sasqGot})); }
 function saveBeaten(){ sset('bankshot-beaten',JSON.stringify(beaten)); }
-function saveBest(){ if(mainSave) return; if(score>best){ best=score; sset('bankshot-best',String(best)); } }
+function saveBest(){ if(mainSave) return; if(score>best){ best=score; sset('bankshot-best',String(best)); gcSubmit(best); } }
 function markSeen(k){ seen[k]=1; sset('bankshot-seen',JSON.stringify(seen)); }
 function clearedCount(){ var c=0, n; for(n in beaten){ if(Object.prototype.hasOwnProperty.call(beaten,n)) c++; } return c; }
 function mainRound(){ return mainSave?mainSave.round:round; }
@@ -616,6 +668,41 @@ function closeLevels(){
   else{ hideOverlay(); last=performance.now(); }
 }
 elRound.addEventListener('click',function(){ initAudio(); openLevels(); });
+
+/* ---------- settings: themes, leaderboard, reset ---------- */
+function openSettings(){
+  if(state==='winning') return;
+  if(state!=='menu'){ menuPrev=state; menuOv=overlay.hidden?null:curOv; }
+  input.down=false; state='menu';
+  var h='<h2>Settings</h2><p class="setlbl">Theme</p><div id="thgrid">', i;
+  for(i=0;i<THEMES.length;i++) h+='<button type="button" class="th'+(i===themeIdx?' cur':'')+'" data-t="'+i+'"><i style="background:'+THEMES[i].css['--swatch']+'"></i>'+THEMES[i].name+'</button>';
+  h+='</div><p class="setlbl">Scores</p>';
+  h+='<button type="button" class="setbtn" id="lbBtn"><span>Leaderboard</span><small>Best: '+best+'</small></button>';
+  if(!IOS) h+='<p class="setnote">Leaderboards live in the iPhone app, through Game Center.</p>';
+  h+='<button type="button" class="setbtn danger" id="resetBtn"><span>Reset all scores</span></button>';
+  h+='<button id="lvback" type="button">Done</button>';
+  showOverlay(h,function(){
+    document.getElementById('thgrid').onclick=function(e){ var t=e.target.closest?e.target.closest('.th'):null; if(!t) return; applyTheme(parseInt(t.getAttribute('data-t'),10)); beep(500,0.06,'triangle',0.05); openSettings(); };
+    document.getElementById('lbBtn').onclick=function(){ if(GC){ swallow(gcShow()); } };
+    document.getElementById('resetBtn').onclick=confirmReset;
+    document.getElementById('lvback').onclick=closeLevels;
+  },true);
+}
+function confirmReset(){
+  showOverlay('<h2>Reset all scores?</h2><p>This clears your best score, your current run and every level you’ve beaten, so you start again from level 1. Your theme stays.</p><p><b>Are you sure? This can’t be undone.</b></p>'+
+    (IOS?'<p class="setnote">Scores already posted to Game Center stay on the leaderboard.</p>':'')+
+    '<button id="go" class="danger" type="button">Yes, reset everything</button><button id="lvback" type="button">Cancel</button>',function(){
+    document.getElementById('go').onclick=resetAll;
+    document.getElementById('lvback').onclick=openSettings;
+  },true);
+}
+function resetAll(){
+  sdel('bankshot-best'); sdel('bankshot-progress'); sdel('bankshot-beaten');
+  best=0; beaten={}; saveBeaten(); mainSave=null; menuPrev=null; menuOv=null;
+  newRun(1);
+  beep(330,0.12,'triangle',0.06); beep(220,0.18,'triangle',0.06,0.1);
+}
+document.getElementById('gear').addEventListener('click',function(){ initAudio(); if(state==='menu'&&overlay.querySelector('#thgrid')){ closeLevels(); return; } openSettings(); });
 
 /* ---------- sasquatch ---------- */
 var SASQ_LV={};
@@ -900,6 +987,48 @@ function previewPath(){
   }
   return pts;
 }
+
+/* ---------- seasonal backdrops: falling leaves (Harvest) and snow (Holiday) ---------- */
+var DECO=null;
+function makeDeco(){
+  var r=mulberry(1125), a=[], i;
+  for(i=0;i<34;i++) a.push({x:r(), y:r(), s:0.5+r(), sp:0.35+r()*0.55, sw:0.6+r()*1.4, ph:r()*6.283, c:Math.floor(r()*4)});
+  return a;
+}
+var LEAF_COL=['#e8833a','#d1495b','#ffc15e','#a8552a'];
+function drawDeco(aw,ah){
+  if(!DECO) DECO=makeDeco();
+  var t=reduceMotion?0:performance.now()/1000, i, d, x, y;
+  ctx.save(); rrect(ARENA.l,ARENA.t,aw,ah,T.glow?12:4); ctx.clip();
+  for(i=0;i<DECO.length;i++){
+    d=DECO[i];
+    if(T.deco==='snow'){
+      y=ARENA.t+(((d.y*ah)+t*d.sp*38)%ah); x=ARENA.l+d.x*aw+Math.sin(t*d.sw+d.ph)*10;
+      ctx.globalAlpha=0.28+0.3*d.s/1.5; ctx.fillStyle='#ffffff';
+      ctx.beginPath(); ctx.arc(x,y,1.1+d.s*1.6,0,6.283); ctx.fill();
+    }else{
+      y=ARENA.t+(((d.y*ah)+t*d.sp*26)%ah); x=ARENA.l+d.x*aw+Math.sin(t*d.sw*0.7+d.ph)*16;
+      ctx.globalAlpha=0.22; ctx.fillStyle=LEAF_COL[d.c];
+      ctx.save(); ctx.translate(x,y); ctx.rotate(d.ph+t*d.sw*0.8);
+      var L=5+d.s*5; ctx.beginPath(); ctx.moveTo(0,-L); ctx.quadraticCurveTo(L*0.75,0,0,L); ctx.quadraticCurveTo(-L*0.75,0,0,-L); ctx.fill();
+      ctx.globalAlpha=0.18; ctx.strokeStyle='#2a1206'; ctx.lineWidth=0.8; ctx.beginPath(); ctx.moveTo(0,-L*0.8); ctx.lineTo(0,L*0.9); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  ctx.globalAlpha=1; ctx.restore();
+  if(T.deco==='snow'){ // string lights around the rail
+    var cols=['#ff3b4e','#3ee07a','#ffd75e','#7db8ff'], k=0, blink=reduceMotion?0:Math.floor(t*2);
+    var pts=[], px, py;
+    for(px=ARENA.l+14;px<=ARENA.r-14;px+=26){ pts.push([px,ARENA.t]); }
+    for(py=ARENA.t+26;py<=ARENA.b-14;py+=26){ pts.push([ARENA.l,py]); pts.push([ARENA.r,py]); }
+    for(i=0;i<pts.length;i++){
+      var on=((i+blink)%3)!==0; ctx.fillStyle=cols[i%4];
+      ctx.globalAlpha=on?0.95:0.35; glow(cols[i%4],on?10:0);
+      ctx.beginPath(); ctx.arc(pts[i][0],pts[i][1],2.6,0,6.283); ctx.fill();
+    }
+    noGlow(); ctx.globalAlpha=1;
+  }
+}
 function draw(){
   ctx.setTransform(K,0,0,K,0,0);
   ctx.clearRect(0,0,W,H);
@@ -917,6 +1046,7 @@ function draw(){
     ctx.fillStyle=T.grid;
     for(var gy=ARENA.t+22;gy<ARENA.b;gy+=32) for(var gx=ARENA.l+22;gx<ARENA.r;gx+=32){ ctx.fillRect(gx-1,gy-1,2,2); }
   }
+  if(T.deco) drawDeco(aw,ah);
   glow(T.rail,14); ctx.strokeStyle=T.rail; ctx.lineWidth=T.railW;
   rrect(ARENA.l,ARENA.t,aw,ah,T.glow?12:4); ctx.stroke(); noGlow();
   if(!lvl) return;
@@ -1051,6 +1181,7 @@ function frame(now){
 hydrate(function(){
   loadState();
   applyTheme(themeIdx);
+  gcAuth();
   resize();
   setupRound();
   requestAnimationFrame(function(n){ last=n; requestAnimationFrame(frame); });
