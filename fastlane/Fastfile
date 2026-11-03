@@ -55,6 +55,16 @@ platform :ios do
     sh("xcodebuild archive #{container} -scheme App -configuration Release " \
        "-destination 'generic/platform=iOS' -archivePath '#{archive}' " \
        "DEVELOPMENT_TEAM=#{ENV.fetch('TEAM_ID')} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''  -quiet")
+    # An unsigned archive carries no entitlements, and the export step re-signs using the
+    # entitlements it finds on the archived binary. So for apps with App.entitlements (Game
+    # Center), ad-hoc sign the archived app with them first; export then keeps them.
+    ent = File.join(app_dir, "App.entitlements")
+    app_path = Dir["#{archive}/Products/Applications/*.app"].first
+    if app_path && File.exist?(ent)
+      Dir["#{app_path}/Frameworks/*"].each { |f| sh("codesign --force --sign - --timestamp=none '#{f}'") }
+      sh("codesign --force --sign - --timestamp=none --entitlements '#{ent}' '#{app_path}'")
+      sh("codesign -d --entitlements :- '#{app_path}'")
+    end
     plist = "#{root}/build/ExportOptions.plist"
     File.write(plist, <<~PLIST)
       <?xml version="1.0" encoding="UTF-8"?>
@@ -72,6 +82,12 @@ platform :ios do
        "-exportOptionsPlist '#{plist}' #{auth}")
     ipa = Dir["#{export_dir}/*.ipa"].first
     UI.user_error!("Export produced no .ipa") unless ipa
+    if File.exist?(ent)
+      check = "#{root}/build/ipa_check"
+      sh("rm -rf '#{check}' && mkdir -p '#{check}' && cd '#{check}' && unzip -q '#{ipa}' && " \
+         "codesign -d --entitlements :- Payload/*.app > ent.txt 2>&1; cat ent.txt")
+      UI.user_error!("Signed IPA is missing the Game Center entitlement") unless File.read("#{check}/ent.txt").include?("game-center")
+    end
 
     upload_to_app_store(
       api_key: api_key,
