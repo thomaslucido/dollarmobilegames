@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <pattern id="dotL" width="16" height="16" patternUnits="userSpaceOnUse">
+      <circle cx="8" cy="8" r="6.2" fill="#ff48b0"/>
+    </pattern>
+    <pattern id="dotS" width="16" height="16" patternUnits="userSpaceOnUse">
+      <circle cx="8" cy="8" r="3.4" fill="#ff48b0"/>
+    </pattern>
+    <pattern id="dotD" width="12" height="12" patternUnits="userSpaceOnUse">
+      <circle cx="6" cy="6" r="2.6" fill="#123c42"/>
+    </pattern>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/>
+      <feColorMatrix values="0 0 0 0 .45  0 0 0 0 .4  0 0 0 0 .32  0 0 0 1.6 -.75"/>
+    </filter>
+  </defs>
+
+  <!-- paper -->
+  <rect width="512" height="512" fill="#f4f0e6"/>
+
+  <!-- pink plate: halftone sun, printed a touch out of register -->
+  <g transform="translate(4 -3)">
+    <circle cx="118" cy="122" r="104" fill="url(#dotS)"/>
+    <circle cx="118" cy="122" r="84" fill="url(#dotL)"/>
+    <circle cx="118" cy="122" r="58" fill="#ff48b0"/>
+  </g>
+
+  <!-- green plate: hedgerow tint + ground -->
+  <path d="M0 372Q30 344 64 360Q96 332 132 356Q170 336 200 362L200 400H0Z" fill="#a6e0c0"/>
+  <path d="M0 396Q128 384 256 392T512 388V512H0Z" fill="#00a95c"/>
+  <!-- knocked-out furrows -->
+  <g fill="none" stroke="#f4f0e6" stroke-width="7" stroke-linecap="round" opacity=".55">
+    <path d="M20 436Q150 426 280 434T500 430"/>
+    <path d="M-10 474Q140 462 270 472T520 466"/>
+  </g>
+
+  <!-- the pit she is clearing: overprint halftone walls -->
+  <path d="M332 391Q380 388 424 390L418 512H338Z" fill="#f4f0e6"/>
+  <path d="M332 391L338 512H356L350 393Z" fill="url(#dotD)"/>
+  <path d="M424 390L418 512H402L408 391Z" fill="url(#dotD)"/>
+
+  <!-- sprouts she has sown behind her -->
+  <g stroke="#00a95c" stroke-width="7" stroke-linecap="round" fill="#00a95c">
+    <path d="M52 394V366"/><path d="M52 372Q34 360 30 346Q48 348 52 366Z"/><path d="M52 368Q70 356 76 342Q58 344 52 362Z"/>
+    <path d="M128 392V372"/><path d="M128 376Q114 366 110 354Q126 356 128 370Z"/><path d="M128 374Q142 364 146 352Q132 354 128 368Z"/>
+  </g>
+  <g transform="translate(3 -2)" fill="#ff48b0">
+    <circle cx="52" cy="354" r="9"/>
+  </g>
+
+  <!-- falling seeds -->
+  <g fill="#123c42">
+    <ellipse cx="170" cy="318" rx="5" ry="7" transform="rotate(-30 170 318)"/>
+    <ellipse cx="150" cy="346" rx="5" ry="7" transform="rotate(-20 150 346)"/>
+    <ellipse cx="190" cy="294" rx="5" ry="7" transform="rotate(-40 190 294)"/>
+  </g>
+
+  <!-- the sower, mid-leap -->
+  <g transform="rotate(-8 268 270)">
+    <!-- legs -->
+    <g fill="none" stroke="#123c42" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M248 318L224 352L196 356"/>
+      <path d="M290 318L322 340L350 330"/>
+    </g>
+    <!-- seed sack -->
+    <circle cx="206" cy="262" r="30" fill="#123c42"/>
+    <path d="M196 236L206 228L218 236" fill="none" stroke="#ff48b0" stroke-width="7" stroke-linecap="round"/>
+    <!-- body -->
+    <path d="M226 214Q206 280 228 318Q268 342 308 318Q330 280 310 214Z" fill="#00a95c"/>
+    <!-- eye -->
+    <circle cx="292" cy="242" r="9" fill="#f4f0e6"/>
+    <circle cx="295" cy="243" r="4.5" fill="#123c42"/>
+    <!-- hat: pink plate, overprints dark where it crosses the green body -->
+    <g transform="translate(4 -3)" style="mix-blend-mode:multiply">
+      <path d="M220 206Q224 140 268 134Q312 140 316 206Z" fill="#ff48b0"/>
+      <ellipse cx="268" cy="212" rx="122" ry="25" fill="#ff48b0"/>
+    </g>
+    <path d="M222 190Q268 200 314 190L316 206Q268 214 220 206Z" fill="#123c42"/>
+  </g>
+
+  <!-- speed marks -->
+  <g transform="translate(4 -3)" stroke="#ff48b0" stroke-width="9" stroke-linecap="round">
+    <path d="M66 246H140"/><path d="M34 280H128"/><path d="M78 314H130"/>
+  </g>
+
+  <!-- paper grain -->
+  <rect width="512" height="512" filter="url(#grain)" opacity=".18"/>
+</svg>

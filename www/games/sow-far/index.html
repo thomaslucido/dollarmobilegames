@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#f4f0e6">
+<title>Sow Far</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#f4f0e6;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+  canvas{display:block;touch-action:none}
+  #sa{position:fixed;left:0;top:0;width:1px;height:env(safe-area-inset-top,0px);pointer-events:none;visibility:hidden}
+  #sb{position:fixed;left:0;bottom:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas><div id="sa"></div><div id="sb"></div>
+<script src="../../shared/game-kit.js"></script>
+<script>
+(function () {
+  'use strict';
+  const kit = GameKit.init({ slug: 'sow-far', backColor: '#f4f0e6' });
+  const cv = document.getElementById('c');
+  const INK = { paper: '#f4f0e6', pink: '#ff48b0', pinkT: '#ffc0e2', green: '#00a95c', greenT: '#a6e0c0', dark: '#123c42', speck: '#d9d2c1' };
+  const FAM = '"Avenir Next Condensed","Arial Narrow","Roboto Condensed","Helvetica Neue",sans-serif';
+  const TAU = Math.PI * 2;
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const eo = (t) => 1 - Math.pow(1 - t, 3);
+  const eio = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+  let W = 390, H = 844, DPR = 1, GY = 557, SLAB = 641, ST = 0, SB = 0;
+  const ctx = cv.getContext('2d');
+  let PAT = {}, GRAIN = null, FONT_PREFIX = '800 ';
+
+  // ---------- canvas, patterns ----------
+  function dotTile(r, col, grid) {
+    const n = Math.max(2, Math.round(grid * DPR));
+    const c = document.createElement('canvas'); c.width = c.height = n;
+    const g = c.getContext('2d'); const k = n / grid; g.scale(k, k);
+    g.fillStyle = col; g.beginPath(); g.arc(grid / 2, grid / 2, r, 0, TAU); g.fill();
+    const p = ctx.createPattern(c, 'repeat');
+    try { p.setTransform(new DOMMatrix([1 / k, 0, 0, 1 / k, 0, 0])); } catch (e) {}
+    return p;
+  }
+  function buildPatterns() {
+    PAT = {
+      pink1: dotTile(1, INK.pink, 7), pink2: dotTile(2, INK.pink, 7), pink3: dotTile(3, INK.pink, 7),
+      dark1: dotTile(1, INK.dark, 7), dark2: dotTile(2, INK.dark, 7), dark3: dotTile(3, INK.dark, 7),
+      green2: dotTile(2, INK.green, 7)
+    };
+    if (!GRAIN) {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const g = c.getContext('2d'); const id = g.createImageData(128, 128);
+      for (let i = 0; i < 128 * 128; i++) {
+        const r = Math.random(), o = i * 4;
+        if (r < 0.06) { id.data[o] = 0xd9; id.data[o + 1] = 0xd2; id.data[o + 2] = 0xc1; id.data[o + 3] = 120 + Math.random() * 135; }
+        else if (r < 0.072) { id.data[o] = 0x12; id.data[o + 1] = 0x3c; id.data[o + 2] = 0x42; id.data[o + 3] = 30 + Math.random() * 40; }
+      }
+      g.putImageData(id, 0, 0);
+      GRAIN = ctx.createPattern(c, 'repeat');
+    }
+  }
+  function onResize(s) {
+    W = s.w; H = s.h; DPR = s.dpr;
+    GY = Math.round(H * 0.66); SLAB = Math.round(H * 0.76);
+    ST = (document.getElementById('sa').getBoundingClientRect().height) || 0;
+    SB = (document.getElementById('sb').getBoundingClientRect().height) || 0;
+    buildPatterns();
+  }
+  kit.fitCanvas(cv, onResize);
+  ctx.font = 'condensed 800 10px ' + FAM;
+  if (/condensed/.test(ctx.font)) FONT_PREFIX = 'condensed 800 ';
+  const fontStr = (px) => FONT_PREFIX + Math.round(px) + 'px ' + FAM;
+  const hasLS = 'letterSpacing' in ctx;
+
+  // ---------- saved progress ----------
+  const asObj = (v) => (v && typeof v === 'object' ? v : {});
+  let best = kit.best() | 0;
+  let bank = Math.max(0, Number(kit.get('bank', 0)) || 0);
+  let plots = asObj(kit.get('plots', {}));      // { plotIndex: level }
+  let picked = asObj(kit.get('picked', {}));    // { plotIndex: ms timestamp berries were last picked }
+  let hints = asObj(kit.get('hints', {}));      // { ran, hold, crow, plant }
+  function saveMeta() {
+    kit.set('bank', bank); kit.set('plots', plots); kit.set('picked', picked); kit.set('hints', hints); kit.set('seen', Date.now());
+  }
+
+  // ---------- course: fixed, seeded, the same every run ----------
+  function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const speedAt = (d) => Math.min(11.5, 6 + 0.01 * Math.max(0, d));
+  const isChasmPlot = (i) => i >= 9 && (i - 9) % 7 === 0;
+  function plotType(i) {
+    const P = 40 * i;
+    if (isChasmPlot(i)) return 'bridge';
+    if (P % 200 === 0) return 'tree';
+    if (i % 3 === 2 && P >= 140) return 'mush';
+    return 'berry';
+  }
+  const PL = {
+    berry: { name: 'BERRY BUSH', cost: [20, 50, 110], seeds: [3, 6, 10], cap: [5, 10, 15] },
+    mush: { name: 'SPRING MUSHROOM', cost: [35, 80] },
+    bridge: { name: 'VINE BRIDGE', cost: [60, 130] },
+    tree: { name: 'HEARTFRUIT TREE', cost: [90, 200] }
+  };
+  const lvOf = (i) => plots[i] | 0;
+  const maxLv = (i) => PL[plotType(i)].cost.length;
+  const maxPlot = () => Math.floor((Math.max(best, 40) + 40) / 40);
+  const nextCost = (i) => (lvOf(i) < maxLv(i) ? PL[plotType(i)].cost[lvOf(i)] : 0);
+  function storedBerries(i, now) {
+    const lv = lvOf(i); if (!lv || plotType(i) !== 'berry') return 0;
+    const t0 = picked[i] || now;
+    return Math.min(PL.berry.cap[lv - 1], Math.max(0, Math.floor((now - t0) / 240000)));
+  }
+
+  const HZ = [];   // hazards, sorted by a: {k, a, b, h, x0?, plot?}
+  const SD = [];   // course seeds {x, y}
+  let PS = [];     // seeds hung by plants {x, y}
+  const R = mulberry32(551);
+  let genCur = 0, nextBlock = 1, prevEnd = 0, gid = 0;
+  function blockOf(i) {
+    const P = 40 * i, t = plotType(i);
+    if (t === 'bridge') return [P - 3, P + 20, true];
+    if (t === 'mush') return [P - 3, P + 5.8, true];
+    return [P - 3, P + 3, false];
+  }
+  function pickType(d) {
+    const w = d < 150 ? [60, 40, 0, 0, 0, 0] : d < 400 ? [40, 30, 30, 0, 0, 0] : d < 700 ? [30, 25, 30, 15, 0, 0] : d < 1000 ? [25, 20, 25, 15, 15, 0] : [20, 20, 20, 15, 15, 10];
+    let r = R() * 100;
+    for (let k = 0; k < 6; k++) { r -= w[k]; if (r < 0) return k; }
+    return 0;
+  }
+  function makeHazard(type, a) {
+    const s = speedAt(a), g = ++gid;
+    if (type === 0) { const L = 1.2 + 0.15 * s + (R() * 0.6 - 0.3); return [{ k: 'bramble', a, b: a + L, h: 0.6, g }]; }
+    if (type === 1) { const w = (0.45 + R() * 0.25) * 0.93 * s; return [{ k: 'pit', a, b: a + w, h: 0, g }]; }
+    if (type === 2) return [{ k: 'stump', a, b: a + 0.8, h: 1.9, g }];
+    if (type === 3) return [{ k: 'crow', a, b: a + 5, x0: a + 4, h: 2.1, g }];
+    if (type === 4) { const L = 1.0 + 0.1 * s, w = (0.3 + R() * 0.1) * 0.93 * s; return [{ k: 'bramble', a, b: a + L, h: 0.6, g }, { k: 'pit', a: a + L + 3, b: a + L + 3 + w, h: 0, g }]; }
+    const w = (0.35 + R() * 0.2) * 0.93 * s;
+    return [{ k: 'pit', a, b: a + w, h: 0, g }, { k: 'stump', a: a + w, b: a + w + 0.8, h: 1.9, g }];
+  }
+  function gapSeeds(from, to) {
+    if (to - from < 12) return;
+    const m = (from + to) / 2;
+    for (let k = -2; k <= 2; k++) SD.push({ x: m + k * 1.1, y: 0.5 });
+  }
+  function arcSeeds(parts) {
+    const first = parts[0], last = parts[parts.length - 1], s = speedAt(first.a);
+    if (first.k === 'crow') { const mx = first.x0 - 28 / (s + 2); for (let k = 0; k < 4; k++) SD.push({ x: mx - 1.5 + k, y: 0.5 }); return; }
+    const tall = parts.some((p) => p.k === 'stump');
+    const apex = tall ? 2.94 : 1.67, half = (tall ? 0.93 : 0.67) * s / 2;
+    const m = tall ? (last.a + last.b) / 2 - 0.4 : (first.a + first.b) / 2;
+    for (let k = 0; k < 4; k++) { const f = (k - 1.5) / 2.5; SD.push({ x: m + f * half, y: 0.5 + apex * (1 - f * f) }); }
+  }
+  function genCourse(X) {
+    let grew = false;
+    while (genCur < X) {
+      grew = true;
+      const [bs, be, fixed] = blockOf(nextBlock);
+      const sp = Math.max(8, 18 - 0.0065 * genCur) + R() * 4;
+      let a = genCur + sp;
+      const parts = makeHazard(pickType(a), a);
+      let end = parts[parts.length - 1].b;
+      if (end + 1.5 > bs) {
+        // the plot (and its chasm or stump) comes first; the hazard moves past it
+        const i = nextBlock, P = 40 * i, t = plotType(i);
+        if (t === 'bridge') { gapSeeds(prevEnd, P + 6); HZ.push({ k: 'chasm', a: P + 6, b: P + 20, h: 0, plot: i, g: ++gid }); prevEnd = P + 20; }
+        if (t === 'mush') { gapSeeds(prevEnd, P + 5); HZ.push({ k: 'stump', a: P + 5, b: P + 5.8, h: 1.9, plot: i, g: ++gid }); prevEnd = P + 5.8; }
+        nextBlock++;
+        const minA = fixed ? prevEnd + sp : be + 1 + R() * 2;
+        if (a < minA) { const d = minA - a; for (const p of parts) { p.a += d; p.b += d; if (p.x0) p.x0 += d; } a = minA; end += d; }
+        if (end + 1.5 > blockOf(nextBlock)[0]) { if (fixed) genCur = prevEnd; continue; }
+      }
+      gapSeeds(prevEnd, a);
+      for (const p of parts) HZ.push(p);
+      if (R() < 0.35) arcSeeds(parts);
+      genCur = end; prevEnd = end;
+    }
+    if (grew) SD.sort((p, q) => p.x - q.x);
+  }
+  genCourse(1200);
+  function lowerBound(arr, x) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m].x < x) lo = m + 1; else hi = m; } return lo; }
+  function hzFrom(x) { let lo = 0, hi = HZ.length; while (lo < hi) { const m = (lo + hi) >> 1; if (HZ[m].a < x) lo = m + 1; else hi = m; } return lo; }
+
+  function buildPlantSeeds() {
+    PS = [];
+    for (const key in plots) {
+      const i = +key, lv = plots[key] | 0, t = plotType(i), P = 40 * i;
+      if (t === 'mush' && lv >= 2) { const s = speedAt(P); for (let j = 0; j < 6; j++) { const tt = 0.467 + (j - 2.5) * 0.085; PS.push({ x: P - 0.45 + s * tt, y: 14 * tt - 15 * tt * tt + 0.5 }); } }
+      if (t === 'bridge' && lv >= 2) { for (let j = 0; j < 8; j++) PS.push({ x: P + 7 + j * (12 / 7), y: 0.5 }); }
+    }
+    PS.sort((p, q) => p.x - q.x);
+  }
+  buildPlantSeeds();
+
+  // ---------- state ----------
+  const S = {
+    mode: 'title', t: 0, runId: 0, hearts: 3, seeds: 0, shown: 0, pop: 0, heartPop: 0, maxX: 0, dist: 0, inv: 0,
+    shakeT: 0, shakeA: 0, dying: -1, dieVx: 0, intro: 0, overT: 0, newBest: false, gained: 0, deathX: 0,
+    rescue: null, hat: null, card: null, nextPlot: 1, hzLo: 0, legPh: 0, sproutAcc: 0, sq: null,
+    passedBest: false, camFrom: { x: 0, ppm: 30 }, demoPlanted: false, seedNote: 0, seedNoteT: -9, pickedRun: {}, mushT: {}, stamp: null, startBest: 0
+  };
+  const B = { x: 0, y: 0, vy: 0, ground: true, airT: 1, boost: false, coy: 0, buf: 0, fall: false, hole: null, rot: 0, lastMush: 0 };
+  const cam = { x: 0, ppm: 30 };
+  const G = { x: 0, vel: 0 };
+  let held = false, autopilot = false, T = 0, farOff = 0, midOff = 0, lastCamX = null, lastCamPPM = 0;
+  let worldFx = [], flyers = [], floats = [], sprouts = [];
+  const AP = { plan: null, press: 0, think: 0 };
+
+  const gardenPPM = () => 0.6 * Math.min(W / 11, H / 20);
+  const playPPM = (spd) => Math.min(W / (11 + 4.5 * (spd - 6) / 5.5), H / 20);
+  function clampG(x) {
+    const vw = W / gardenPPM();
+    const hi = Math.max((maxPlot() + 1) * 40 + 8, S.deathX + 10) - vw * 0.5;
+    return clamp(x, -vw * 0.3, hi);
+  }
+  G.x = -0.22 * W / gardenPPM();
+  const X = (x) => (x - cam.x) * cam.ppm;
+  const Y = (y) => GY - y * cam.ppm;
+
+  // ---------- body physics (shared by the game and the autopilot's look-ahead) ----------
+  const bridged = (i) => lvOf(i) >= 1;
+  function holeAt(x) {
+    for (let i = S.hzLo; i < HZ.length; i++) {
+      const h = HZ[i]; if (h.a > x + 1) break;
+      if ((h.k === 'pit' || (h.k === 'chasm' && !bridged(h.plot))) && x - 0.15 > h.a && x + 0.15 < h.b) return h;
+    }
+    return null;
+  }
+  function mushAt(x) {
+    const i = Math.round(x / 40); if (i < 1) return 0;
+    if (Math.abs(x - 40 * i) < 0.45 && plotType(i) === 'mush' && lvOf(i) >= 1) return i;
+    return 0;
+  }
+  const crowX = (h, rx) => h.x0 - 2 * Math.max(0, rx - (h.x0 - 14)) / speedAt(h.x0);
+  function hitAt(b) {
+    if (b.fall) return null;
+    const l = b.x - 0.25, r = b.x + 0.25, y0 = b.y, y1 = b.y + 0.95;
+    for (let i = S.hzLo; i < HZ.length; i++) {
+      const h = HZ[i]; if (h.a > r + 1) break;
+      if (h.hitRun === S.runId) continue;
+      if (h.k === 'bramble') { if (r > h.a + 0.1 && l < h.b - 0.1 && y0 < 0.5) return h; }
+      else if (h.k === 'stump') { if (r > h.a + 0.05 && l < h.b - 0.05 && y0 < 1.85) return h; }
+      else if (h.k === 'crow') { const cx = crowX(h, b.x); if (r > cx - 0.4 && l < cx + 0.4 && y1 > 1.55 && y0 < 2.05) return h; }
+    }
+    return null;
+  }
+  // events: 1 jump, 2 land, 4 bounce, 8 fell
+  function stepBody(b, dt, hold, spd) {
+    let ev = 0;
+    b.buf -= dt; b.coy -= dt;
+    if (b.fall) {
+      b.vy -= 30 * dt; b.y += b.vy * dt;
+      b.x = Math.min(b.x + spd * dt * 0.25, b.hole.b - 0.3);
+      if (b.y < -0.8) ev |= 8;
+      return ev;
+    }
+    b.x += spd * dt;
+    if (b.ground) {
+      const m = mushAt(b.x);
+      if (m) { b.ground = false; b.vy = 14; b.airT = 0; b.boost = false; b.lastMush = m; ev |= 4; }
+      else if (holeAt(b.x)) { b.ground = false; b.vy = 0; b.coy = 0.08; b.airT = 1; b.boost = false; }
+    }
+    if (b.buf > 0 && (b.ground || b.coy > 0)) { b.ground = false; b.vy = 10; b.airT = 0; b.boost = hold; b.buf = 0; b.coy = 0; ev |= 1; }
+    if (!b.ground) {
+      if (!hold) b.boost = false;
+      const g = (b.boost && b.vy > 0 && b.airT < 0.25) ? 12 : 30;
+      b.vy -= g * dt; b.y += b.vy * dt; b.airT += dt;
+      if (b.y <= 0 && b.vy <= 0) {
+        const h = holeAt(b.x);
+        if (!h) {
+          const m = mushAt(b.x);
+          if (m) { b.vy = 14; b.y = 0; b.airT = 0; b.boost = false; b.lastMush = m; ev |= 4; }
+          else { b.y = 0; b.vy = 0; b.ground = true; ev |= 2; }
+        } else if (b.y < -0.25 && b.coy <= 0) { b.fall = true; b.hole = h; }
+      }
+    }
+    return ev;
+  }
+  const copyB = (b) => ({ x: b.x, y: b.y, vy: b.vy, ground: b.ground, airT: b.airT, boost: b.boost, coy: b.coy, buf: b.buf, fall: b.fall, hole: b.hole, lastMush: 0 });
+
+  // ---------- autopilot: simulates candidate jumps along the fixed course ----------
+  function apTry(x0, hold) {
+    const b = copyB(B); let pressed = false, pt = 0, landedAt = -1;
+    for (let n = 0; n < 200; n++) {
+      let h = false;
+      if (!pressed && b.x >= x0 && b.ground) { pressed = true; b.buf = 0.1; }
+      if (pressed) { h = pt < hold; pt += 1 / 60; }
+      stepBody(b, 1 / 60, h, speedAt(b.x));
+      if (b.fall || hitAt(b)) return false;
+      if (pressed && pt > 0.1 && b.ground) { if (landedAt < 0) landedAt = b.x; if (b.x > landedAt + 0.6) return true; }
+      if (!pressed && b.x > x0 + 1) return false;
+    }
+    return false;
+  }
+  function apPlan() {
+    const b = copyB(B); let danger = -1;
+    for (let n = 0; n < 150; n++) {
+      stepBody(b, 1 / 60, false, speedAt(b.x));
+      if (b.fall || hitAt(b)) { danger = b.x; break; }
+      if (b.x > B.x + 14) break;
+    }
+    if (danger < 0) return null;
+    let plan = null, bestScore = -1;
+    for (const hold of [0.02, 0.1, 0.18, 0.26]) {
+      let rs = -1, bs = -1, bl = 0;
+      for (let x0 = B.x; x0 <= danger + 0.01; x0 += 0.15) {
+        if (apTry(x0, hold)) { if (rs < 0) rs = x0; const len = x0 - rs + 0.15; if (len > bl) { bl = len; bs = rs; } }
+        else rs = -1;
+      }
+      if (bl > 0) { const sc = bl - hold * 2; if (sc > bestScore) { bestScore = sc; plan = { x0: bs + bl / 2 - 0.075, hold }; } }
+    }
+    return plan || { x0: danger - 0.8, hold: 0.26 };
+  }
+  function apUpdate(dt) {
+    if (AP.press > 0) { AP.press -= dt; held = AP.press > 0; return; }
+    held = false;
+    if (!B.ground) { AP.plan = null; return; }
+    AP.think -= dt;
+    if (!AP.plan || AP.think <= 0) { AP.plan = apPlan(); AP.think = 0.12; }
+    if (AP.plan && B.x >= AP.plan.x0 - 0.01) { B.buf = 0.1; held = true; AP.press = AP.plan.hold; AP.plan = null; }
+  }
+
+  // ---------- sound ----------
+  const snd = (f, d, type, v) => GameKit.sound(f, d, type, v);
+  const seq = (fs, step, type, v, d) => fs.forEach((f, k) => setTimeout(() => snd(f, d, type, v), k * step));
+  const PENTA = [880, 988, 1175, 1319, 1568, 1760, 1976, 2349, 2637];
+
+  // ---------- run lifecycle ----------
+  function startRun() {
+    S.camFrom = { x: cam.x, ppm: cam.ppm };
+    S.mode = 'play'; S.runId++; S.intro = 0.5;
+    Object.assign(B, { x: 0, y: 0, vy: 0, ground: true, airT: 1, boost: false, coy: 0, buf: 0, fall: false, hole: null, rot: 0, lastMush: 0 });
+    Object.assign(S, { hearts: 3, seeds: 0, shown: 0, pop: 0, heartPop: 0, maxX: 0, inv: 0, dying: -1, rescue: null, hat: null, card: null, nextPlot: 1, hzLo: 0, sproutAcc: 0, sq: null, passedBest: false, pickedRun: {}, mushT: {}, startBest: best });
+    worldFx = []; flyers = []; floats = []; sprouts = [];
+    AP.plan = null; AP.press = 0; held = false;
+    if (!hints.ran) { hints.ran = 1; saveMeta(); }
+    kit.buzz();
+    seq([523, 659], 70, 'triangle', 0.04, 0.08);
+  }
+  function shake(a, t) { S.shakeA = a; S.shakeT = t; }
+  function onHit() {
+    S.hearts--; S.inv = 1.2; S.heartPop = 1; shake(6, 0.2);
+    snd(110, 0.06, 'square', 0.07); kit.buzz();
+    for (let k = 0; k < 6; k++) worldFx.push({ k: 'dust', x: B.x, y: B.y + 0.6, vx: (Math.random() - 0.3) * 4, vy: Math.random() * 4, t: 0, life: 0.45, c: INK.dark });
+    if (S.hearts <= 0) die();
+  }
+  function onFall() {
+    if (S.inv <= 0) { S.hearts--; S.heartPop = 1; snd(110, 0.06, 'square', 0.06); kit.buzz(); }
+    if (S.hearts <= 0) { die(); return; }
+    const h = B.hole; let lx = h.b + 0.5;
+    for (let i = hzFrom(h.a - 15); i < HZ.length; i++) {
+      const z = HZ[i]; if (z.a > lx + 0.6) break;
+      if (z === h || z.k === 'crow') continue;
+      if (z.b > lx - 0.6 && z.a < lx + 0.6) lx = z.b + 0.6;
+    }
+    S.rescue = { t: 0, x0: B.x, y0: B.y, x1: lx };
+    B.fall = false; B.hole = null;
+    seq([660, 990], 120, 'triangle', 0.05, 0.1);
+  }
+  function die() {
+    S.dying = 0.6; S.deathX = B.x; S.rescue = null;
+    S.hat = { x: B.x, y: Math.max(0, B.y) + 1.0, vx: -1.5, vy: 7, r: 0, vr: -11, rest: false };
+    if (!B.fall) { B.vy = 5; B.ground = false; S.dieVx = 3; }
+    shake(8, 0.3);
+    seq([392, 330, 262], 140, 'triangle', 0.06, 0.14); kit.buzz('heavy');
+  }
+  function toOver() {
+    S.dying = -1; S.mode = 'over'; S.overT = 0; S.demoPlanted = false;
+    const d = Math.floor(S.maxX); S.dist = d;
+    S.newBest = d > best; if (S.newBest) { best = d; kit.saveBest(d); }
+    S.gained = S.seeds; bank += S.seeds; S.shown = S.seeds; flyers = [];
+    saveMeta();
+    S.camFrom = { x: cam.x, ppm: cam.ppm };
+    const vw = W / gardenPPM();
+    const P = nearestPlot(S.deathX);
+    const center = P ? (Math.abs(P - S.deathX) < vw * 0.6 ? (P + S.deathX) / 2 : P) : S.deathX;
+    G.x = clampG(center - vw / 2); G.vel = 0;
+  }
+  function nearestPlot(x) {
+    let bi = 0, bd = 1e9; const mp = maxPlot();
+    for (let pass = 0; pass < 2 && !bi; pass++) {
+      for (let i = 1; i <= mp; i++) {
+        if (lvOf(i) >= maxLv(i) || (pass === 0 && nextCost(i) > bank)) continue;
+        const d = Math.abs(40 * i - x); if (d < bd) { bd = d; bi = i; }
+      }
+    }
+    return bi ? 40 * bi : 0;
+  }
+  function gainSeed(wx, wy, delay) {
+    S.seeds++;
+    flyers.push({ x0: X(wx), y0: Y(wy), t: -(delay || 0), dur: 0.35 });
+    if (T - S.seedNoteT < 0.5) S.seedNote = Math.min(PENTA.length - 1, S.seedNote + 1); else S.seedNote = 0;
+    S.seedNoteT = T;
+    if (!delay) snd(PENTA[S.seedNote], 0.07, 'sine', 0.05);
+  }
+  function passPlot(i) {
+    const lv = lvOf(i); if (!lv) return;
+    const t = plotType(i), P = 40 * i;
+    if (t === 'berry') {
+      const now = Date.now(), n = PL.berry.seeds[lv - 1] + storedBerries(i, now);
+      picked[i] = now; S.pickedRun[i] = 1;
+      for (let k = 0; k < n; k++) gainSeed(P + (Math.random() - 0.5) * 0.8, 0.6 + Math.random() * 0.6, 0.05 + k * 0.04);
+      for (let k = 0; k < 8; k++) worldFx.push({ k: 'dust', x: P, y: 0.7, vx: (Math.random() - 0.5) * 6, vy: 2 + Math.random() * 4, t: 0, life: 0.5, c: INK.pink });
+      seq([1175, 1319, 1568], 50, 'sine', 0.05, 0.07);
+      floats.push({ x: P, y: 1.9, s: '+' + n, t: 0, c: INK.pink });
+    } else if (t === 'tree') {
+      S.pickedRun[i] = 1;
+      const before = S.hearts; S.hearts = Math.min(3, S.hearts + lv);
+      if (S.hearts > before) { S.heartPop = 1; floats.push({ x: P, y: 3.2, s: '+' + (S.hearts - before) + ' HEART', t: 0, c: INK.pink }); seq([784, 1046, 1319], 70, 'triangle', 0.05, 0.1); }
+    }
+  }
+
+  // ---------- garden: planting ----------
+  function tryPlant(i, quiet) {
+    const t = plotType(i), lv = lvOf(i);
+    if (40 * i > Math.max(best, 40) + 40 || lv >= maxLv(i)) return false;
+    const c = PL[t].cost[lv];
+    if (bank < c) { if (!quiet) { snd(150, 0.08, 'square', 0.04); if (S.card) S.card.nope = 0.3; } return false; }
+    bank -= c; plots[i] = lv + 1;
+    if (t === 'berry' && lv === 0) picked[i] = Date.now();
+    if (!hints.plant) hints.plant = 1;
+    saveMeta(); buildPlantSeeds();
+    S.stamp = { i, t: 0 };
+    seq([784, 1046], 110, 'triangle', 0.06, 0.12); kit.buzz();
+    return true;
+  }
+  function cheapestPlant() {
+    let bi = 0, bc = 1e9; const mp = maxPlot();
+    for (let i = 1; i <= mp; i++) { if (lvOf(i) >= maxLv(i)) continue; const c = nextCost(i); if (c <= bank && c < bc) { bc = c; bi = i; } }
+    return bi;
+  }
+  function stakeAt(x, y) {
+    if (Math.abs(y - (GY + 40)) > 36) return 0;
+    const i = Math.round((cam.x + x / cam.ppm) / 40);
+    if (i >= 1 && Math.abs(X(40 * i) - x) <= 36 && i <= maxPlot() + 1) return i;
+    return 0;
+  }
+  function cardRect() {
+    const w = Math.min(300, W - 32), h = 176, sx = X(40 * S.card.i);
+    return { x: clamp(sx - w / 2, 16, W - 16 - w), y: Math.max(ST + 8, GY - 52 - h), w, h, sx };
+  }
+  function gardenTap(x, y) {
+    if (S.mode === 'over' && S.overT < 0.3) return;
+    if (S.card) {
+      const c = cardRect();
+      if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) tryPlant(S.card.i);
+      else S.card = null;
+      return;
+    }
+    const i = stakeAt(x, y);
+    if (i) { S.card = { i, t: 0, nope: 0 }; snd(1046, 0.04, 'triangle', 0.04); return; }
+    startRun();
+  }
+
+  // ---------- input ----------
+  const pointers = new Set();
+  let drag = null;
+  cv.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (S.mode === 'paused') { S.mode = 'play'; S.swallow = e.pointerId; return; }
+    if (S.mode === 'play') {
+      pointers.add(e.pointerId);
+      if (!autopilot && S.dying < 0) { held = true; B.buf = 0.1; }
+      return;
+    }
+    drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, gx0: G.x, moved: false, lx: e.clientX, lt: performance.now(), v: 0 };
+    G.vel = 0;
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x0;
+    if (!drag.moved && Math.abs(dx) > 10) drag.moved = true;
+    if (drag.moved) {
+      G.x = clampG(drag.gx0 - dx / cam.ppm);
+      const now = performance.now(), dtm = Math.max(1, now - drag.lt);
+      drag.v = lerp(drag.v, -(e.clientX - drag.lx) / cam.ppm / (dtm / 1000), 0.5);
+      drag.lx = e.clientX; drag.lt = now;
+    }
+  });
+  const up = (e) => {
+    pointers.delete(e.pointerId);
+    if (S.mode === 'play' && !autopilot) held = pointers.size > 0;
+    if (S.swallow === e.pointerId) { S.swallow = null; return; }
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null;
+    if (S.mode !== 'title' && S.mode !== 'over') return;
+    if (d.moved) { G.vel = performance.now() - d.lt < 80 ? clamp(d.v, -120, 120) : 0; return; }
+    gardenTap(e.clientX, e.clientY);
+  };
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); held = pointers.size > 0 && !autopilot ? held : false; if (drag && drag.id === e.pointerId) drag = null; });
+  kit.onPause(() => { if (S.mode === 'play') { S.mode = 'paused'; held = false; pointers.clear(); } saveMeta(); });
+
+  // ---------- update ----------
+  function updatePlay(dt) {
+    if (S.intro > 0) S.intro = Math.max(0, S.intro - dt);
+    S.inv = Math.max(0, S.inv - dt);
+    genCourse(B.x + 300);
+    while (S.hzLo < HZ.length - 1 && HZ[S.hzLo].b < B.x - 3) S.hzLo++;
+    const spd = speedAt(B.x);
+    if (S.dying >= 0) {
+      S.dying -= dt;
+      if (!B.fall) {
+        B.vy -= 30 * dt; B.y = Math.max(0, B.y + B.vy * dt); B.x += S.dieVx * dt; S.dieVx *= Math.pow(0.03, dt);
+        B.rot = lerp(B.rot, -1.45, Math.min(1, dt * 9));
+      } else { B.y = Math.max(-1.1, B.y - 2 * dt); }
+      if (S.dying <= 0) toOver();
+      return;
+    }
+    if (S.rescue) {
+      const r = S.rescue; r.t += dt;
+      const e = eio(Math.min(1, r.t / 1.0));
+      B.x = lerp(r.x0, r.x1, e); B.y = lerp(r.y0, 0, e) + Math.sin(Math.PI * e) * 2.4;
+      if (r.t >= 1) { S.rescue = null; Object.assign(B, { y: 0, vy: 0, ground: true, airT: 1, boost: false, buf: 0 }); S.inv = Math.max(S.inv, 0.8); landFx(); }
+    } else {
+      if (autopilot) apUpdate(dt);
+      const n = Math.max(1, Math.ceil(dt * 120)), h = dt / n;
+      for (let k = 0; k < n; k++) {
+        const px = B.x;
+        const ev = stepBody(B, h, held, spd);
+        if (ev & 1) { S.sq = { k: 'up', t: 0 }; seq([330, 420, 520], 27, 'triangle', 0.045, 0.05); S.holdNote = true; }
+        if (ev & 2) landFx();
+        if (ev & 4) { S.mushT[B.lastMush] = 0; S.sq = { k: 'up', t: 0 }; seq([200, 300, 420, 600], 37, 'square', 0.03, 0.05); }
+        if (ev & 8) { onFall(); break; }
+        const hz = hitAt(B);
+        if (hz) { hz.hitRun = S.runId; if (S.inv <= 0) { onHit(hz); if (S.dying >= 0) break; } }
+        if (B.ground) S.sproutAcc += B.x - px;
+      }
+      if (S.holdNote && !B.ground && B.boost && B.airT > 0.12) { snd(620, 0.06, 'triangle', 0.04); S.holdNote = false; }
+      if (B.ground) S.holdNote = false;
+      collect(SD); collect(PS);
+      if (S.sproutAcc > 1.7) { S.sproutAcc = 0; sprouts.push({ x: B.x - 0.35, t: 0, f: Math.random() < 0.5 }); }
+    }
+    if (B.ground && !S.rescue) S.legPh += dt * 10 * (spd / 6);
+    while (40 * S.nextPlot <= B.x) passPlot(S.nextPlot++);
+    if (S.startBest > 10 && !S.passedBest && B.x > S.startBest) {
+      S.passedBest = true; floats.push({ x: B.x + 1.5, y: 2.6, s: 'NEW BEST', t: 0, c: INK.pink }); seq([784, 988, 1175, 1568], 70, 'triangle', 0.05, 0.1);
+    }
+    for (let i = S.hzLo; i < HZ.length; i++) {
+      const z = HZ[i]; if (z.a > B.x) break;
+      if (z.b < B.x - 0.4 && z.b > B.x - 1.5 && z.hitRun !== S.runId) {
+        if (z.k === 'stump' && !hints.hold) hints.hold = 1;
+        if (z.k === 'crow' && !hints.crow) hints.crow = 1;
+      }
+    }
+    S.maxX = Math.max(S.maxX, B.x);
+  }
+  function landFx() {
+    S.sq = { k: 'down', t: 0 };
+    snd(140, 0.04, 'sine', 0.08);
+    for (let k = 0; k < 3; k++) worldFx.push({ k: 'dust', x: B.x - 0.2 + k * 0.2, y: 0.05, vx: (k - 1) * 1.6 - 1, vy: 1 + Math.random(), t: 0, life: 0.35, c: INK.green });
+  }
+  function collect(arr) {
+    const cy = B.y + 0.5;
+    for (let i = lowerBound(arr, B.x - 0.8); i < arr.length && arr[i].x < B.x + 0.8; i++) {
+      const s = arr[i]; if (s.got === S.runId) continue;
+      if (Math.abs(s.y - cy) < 0.8) { s.got = S.runId; gainSeed(s.x, s.y, 0); }
+    }
+  }
+
+  function update(dt) {
+    T += dt; S.t += dt;
+    S.shakeT = Math.max(0, S.shakeT - dt);
+    S.pop = Math.max(0, S.pop - dt * 5); S.heartPop = Math.max(0, S.heartPop - dt * 3);
+    if (S.mode === 'play') updatePlay(dt);
+    if (S.mode === 'over') {
+      S.overT += dt;
+      if (autopilot && !S.demoPlanted && S.overT > 0.4) {
+        S.demoPlanted = true; const i = cheapestPlant();
+        if (i) { tryPlant(i, true); G.x = clampG(40 * i - W / gardenPPM() / 2); }
+      }
+    }
+    if ((S.mode === 'title' || S.mode === 'over') && !drag && G.vel) {
+      G.x = clampG(G.x + G.vel * dt); G.vel *= Math.pow(0.02, dt); if (Math.abs(G.vel) < 0.3) G.vel = 0;
+    }
+    if (S.card) { S.card.t += dt; S.card.nope = Math.max(0, (S.card.nope || 0) - dt); }
+    if (S.stamp) { S.stamp.t += dt; if (S.stamp.t > 0.4) S.stamp = null; }
+    for (const k in S.mushT) S.mushT[k] += dt;
+    if (S.hat && !S.hat.rest) {
+      const h = S.hat; h.vy -= 30 * dt; h.x += h.vx * dt; h.y += h.vy * dt; h.r += h.vr * dt;
+      if (h.y <= 0.02 && h.vy < 0) { if (!holeAt(h.x)) { h.y = 0.02; h.rest = true; h.r = 0.25; } else if (h.y < -1) { h.y = -1; h.rest = true; } }
+    }
+    for (const p of worldFx) { p.t += dt; if (p.k === 'dust') { p.x += p.vx * dt; p.y += p.vy * dt; p.vy -= 12 * dt; } }
+    worldFx = worldFx.filter((p) => p.t < p.life);
+    for (const f of flyers) { f.t += dt; if (f.t >= f.dur && !f.done) { f.done = true; S.shown++; S.pop = 1; } }
+    flyers = flyers.filter((f) => !f.done);
+    for (const f of floats) f.t += dt;
+    floats = floats.filter((f) => f.t < 1.2);
+    for (const s of sprouts) s.t += dt;
+    if (sprouts.length > 40) sprouts.shift();
+    updateCam();
+  }
+  function updateCam() {
+    if (S.mode === 'play' || S.mode === 'paused') {
+      const ppm = playPPM(speedAt(B.x));
+      if (S.intro > 0) {
+        const e = eio(1 - S.intro / 0.5);
+        cam.ppm = lerp(S.camFrom.ppm, ppm, e);
+        cam.x = lerp(S.camFrom.x, B.x - 0.22 * W / cam.ppm, e);
+      } else { cam.ppm = ppm; cam.x = B.x - 0.22 * W / ppm; }
+    } else if (S.mode === 'over') {
+      const e = eo(clamp(S.overT / 0.7, 0, 1));
+      cam.ppm = lerp(S.camFrom.ppm, gardenPPM(), e); cam.x = lerp(S.camFrom.x, G.x, e);
+    } else { cam.ppm = gardenPPM(); cam.x = G.x; }
+    if (lastCamX !== null) { const d = cam.x - lastCamX; farOff += d * cam.ppm * 0.15; midOff += d * cam.ppm * 0.45; }
+    lastCamX = cam.x;
+  }
+
+  // ---------- drawing helpers ----------
+  function txt(s, x, y, px, col, align, ls, knock) {
+    ctx.font = fontStr(px); ctx.fillStyle = col; ctx.textAlign = align || 'left'; ctx.textBaseline = 'alphabetic';
+    if (hasLS) ctx.letterSpacing = ls ? (ls * px).toFixed(1) + 'px' : '0px';
+    const xx = align === 'center' && ls ? x + ls * px / 2 : x;
+    if (knock) { ctx.save(); ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = INK.paper; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(4, px * 0.22); ctx.strokeText(s, xx, y); ctx.restore(); }
+    ctx.fillText(s, xx, y);
+  }
+  function inkText(s, x, y, px, align, col, knock) {
+    ctx.save();
+    if (knock) txt(s, x, y, px, INK.paper, align, 0, true);
+    ctx.globalCompositeOperation = 'multiply';
+    txt(s, x + Math.max(2, px * 0.035), y - Math.max(1, px * 0.02), px, INK.pink, align);
+    ctx.globalCompositeOperation = 'source-over';
+    txt(s, x, y, px, col || INK.green, align);
+    ctx.restore();
+  }
+  function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+  function heartPath(x, y, s) {
+    ctx.beginPath(); ctx.moveTo(x, y + s * 0.42);
+    ctx.bezierCurveTo(x - s * 0.75, y - s * 0.05, x - s * 0.42, y - s * 0.62, x, y - s * 0.2);
+    ctx.bezierCurveTo(x + s * 0.42, y - s * 0.62, x + s * 0.75, y - s * 0.05, x, y + s * 0.42); ctx.closePath();
+  }
+  // pink ink, printed 2px right and 1px up; knock out the paper underneath first when it sits on green
+  function pinkInk(path, knock) {
+    if (knock) { ctx.fillStyle = INK.paper; path(); ctx.fill(); }
+    ctx.save(); ctx.translate(2, -1); ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = INK.pink; path(); ctx.fill(); ctx.restore();
+  }
+  function seedShape(x, y, s, rot) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot || -0.5);
+    ctx.save(); ctx.translate(2, -1); ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = INK.pink;
+    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.32, s * 0.5, 0, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = Math.max(1, s * 0.09); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, -s * 0.28); ctx.quadraticCurveTo(s * 0.12, 0, 0, s * 0.28); ctx.stroke();
+    ctx.restore();
+  }
+  function heartIcon(x, y, s, full, pop) {
+    ctx.save(); ctx.translate(x, y); const k = 1 + pop * 0.25; ctx.scale(k, k);
+    ctx.fillStyle = INK.green; ctx.beginPath(); ctx.ellipse(s * 0.12, -s * 0.48, s * 0.18, s * 0.08, -0.6, 0, TAU); ctx.fill();
+    ctx.fillStyle = INK.paper; heartPath(1, 0, s * 1.3); ctx.fill();
+    if (full) pinkInk(() => heartPath(0, 0, s), false);
+    else { ctx.strokeStyle = INK.dark; ctx.lineWidth = 2; heartPath(0, 0, s); ctx.stroke(); }
+    ctx.restore();
+  }
+  const hash = (n) => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+
+  // ---------- backdrop ----------
+  function drawBackdrop() {
+    ctx.fillStyle = INK.paper; ctx.fillRect(0, 0, W, H);
+    if (S.mode === 'title') drawTitleWord();
+    // giant halftone sun
+    const sr = W * 0.32, sx = W * 0.74 + Math.sin(T * 0.04) * W * 0.03, sy = Math.max(ST + 40, H * 0.05) + sr * 0.75 + Math.cos(T * 0.03) * 6;
+    ctx.save(); ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = PAT.pink2; ctx.beginPath(); ctx.arc(sx, sy, sr, 0, TAU); ctx.fill();
+    ctx.fillStyle = PAT.pink3; ctx.beginPath(); ctx.arc(sx - sr * 0.12, sy - sr * 0.1, sr * 0.72, 0, TAU); ctx.fill();
+    ctx.restore();
+    // far hills, pink halftone, parallax 0.15
+    ctx.save(); ctx.translate(-farOff, 0); ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = PAT.pink2; ctx.beginPath(); ctx.moveTo(farOff - 2, GY);
+    for (let x = -2; x <= W + 10; x += 8) {
+      const u = x + farOff;
+      ctx.lineTo(u, GY - H * (0.062 + 0.03 * Math.sin(u * 0.0042 + 1.3) + 0.014 * Math.sin(u * 0.0113 + 0.4)));
+    }
+    ctx.lineTo(farOff + W + 10, GY); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // mid hedgerow, green tint bumps, parallax 0.45
+    ctx.save(); ctx.translate(-midOff, 0); ctx.fillStyle = INK.greenT;
+    const k0 = Math.floor(midOff / 34) - 2, k1 = Math.ceil((midOff + W) / 34) + 2;
+    ctx.beginPath();
+    for (let k = k0; k <= k1; k++) { const r = 16 + hash(k) * 18; const cx = k * 34 + hash(k + 99) * 10; ctx.moveTo(cx + r, GY + 4); ctx.arc(cx, GY + 4, r, 0, TAU); }
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ---------- ground ----------
+  function drawGround() {
+    const u = cam.ppm;
+    ctx.fillStyle = INK.green; ctx.fillRect(0, GY, W, SLAB - GY);
+    // grass ticks, anchored to the lane
+    ctx.strokeStyle = INK.greenT; ctx.lineWidth = 2; ctx.beginPath();
+    const step = 0.9, x0 = Math.floor(cam.x / step) - 1, x1 = Math.ceil((cam.x + W / u) / step) + 1;
+    for (let k = x0; k <= x1; k++) { const sx = X(k * step + hash(k) * 0.4); const hh = 4 + hash(k + 7) * 5; ctx.moveTo(sx, GY + 3 + hash(k + 3) * 8); ctx.lineTo(sx + 2, GY + 3 + hash(k + 3) * 8 + hh); }
+    ctx.stroke();
+    // holes
+    const lo = cam.x - 16, hi = cam.x + W / u + 2;
+    for (let i = hzFrom(lo); i < HZ.length && HZ[i].a < hi; i++) {
+      const h = HZ[i]; if (h.k !== 'pit' && h.k !== 'chasm') continue;
+      const a = Math.round(X(h.a)), b = Math.round(X(h.b)), dh = SLAB - GY;
+      ctx.fillStyle = INK.paper; ctx.fillRect(a, GY - 1, b - a, dh + 2);
+      ctx.save(); ctx.translate(a, GY);
+      ctx.fillStyle = PAT.dark1; ctx.fillRect(0, 0, b - a, dh);
+      const wall = Math.min(9, (b - a) / 3);
+      ctx.fillStyle = PAT.dark3; ctx.fillRect(0, 0, wall, dh); ctx.fillRect(b - a - wall, 0, wall, dh);
+      ctx.fillStyle = PAT.dark2; ctx.fillRect(0, dh - 16, b - a, 16);
+      ctx.restore();
+      ctx.fillStyle = INK.dark; ctx.fillRect(a - 1, GY - 1, 3, dh + 1); ctx.fillRect(b - 2, GY - 1, 3, dh + 1);
+    }
+  }
+  function drawSoil() {
+    ctx.fillStyle = INK.paper; ctx.fillRect(0, SLAB, W, H - SLAB);
+    ctx.fillStyle = INK.dark; ctx.fillRect(0, SLAB, W, 3);
+    ctx.strokeStyle = INK.dark; ctx.lineCap = 'butt';
+    for (let j = 0; j < 4; j++) {
+      ctx.lineWidth = 3.2 - j * 0.5; ctx.setLineDash([20 + j * 4, 9]);
+      ctx.lineDashOffset = cam.x * cam.ppm * (1 + j * 0.18);
+      const y = SLAB + 12 + j * (10 + j * 1.5);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    drawRibbon();
+  }
+  function drawRibbon() {
+    const y = H - SB - 30, L = 26, Rr = W - 26;
+    const span = Math.max(best, S.maxX, 120) + 40;
+    const rx = (d) => L + (Rr - L) * clamp(d / span, 0, 1);
+    ctx.strokeStyle = INK.greenT; ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(Rr, y); ctx.stroke();
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(rx(Math.max(best, 1)), y); ctx.stroke();
+    // chasms as gaps, plots as dots
+    for (let i = 9; 40 * i < span; i += 7) { const a = rx(40 * i + 6), b = rx(40 * i + 20); ctx.fillStyle = INK.paper; ctx.fillRect(a, y - 4, Math.max(2, b - a), 8); }
+    for (let i = 1; 40 * i < span; i++) {
+      const lv = lvOf(i), x = rx(40 * i);
+      if (lv) pinkInk(() => { ctx.beginPath(); ctx.arc(x, y, 3.5 + lv * 0.8, 0, TAU); }, false);
+      else { ctx.fillStyle = INK.dark; ctx.fillRect(x - 0.5, y - 3, 1.5, 6); }
+    }
+    if (S.mode === 'title' || S.mode === 'over') {
+      const a = rx(Math.max(0, cam.x)), b = rx(Math.max(0, cam.x + W / cam.ppm));
+      ctx.strokeStyle = INK.green; ctx.lineWidth = 2; rr(a - 3, y - 9, Math.max(6, b - a + 6), 18, 4); ctx.stroke();
+    }
+    const me = S.mode === 'title' ? 0 : (S.mode === 'over' ? S.deathX : B.x);
+    ctx.fillStyle = INK.green; ctx.beginPath(); ctx.moveTo(rx(me), y - 4); ctx.lineTo(rx(me) - 6, y - 14); ctx.lineTo(rx(me) + 6, y - 14); ctx.closePath(); ctx.fill();
+    txt('0', L, y + 18, 11, INK.dark, 'left', 0.12);
+    if (best > 0) txt('BEST ' + best, rx(best), y + 18, 11, INK.dark, rx(best) > W * 0.7 ? 'right' : 'center', 0.12);
+  }
+
+  // ---------- plants ----------
+  function stampScale(i) { if (!S.stamp || S.stamp.i !== i) return 1; const t = S.stamp.t; return t < 0.16 ? 1.3 - 0.3 * (t / 0.16) : 1; }
+  function drawPlot(i, garden) {
+    const P = 40 * i, t = plotType(i), lv = lvOf(i), u = cam.ppm, sx = X(P);
+    const sc = stampScale(i);
+    ctx.save(); ctx.translate(sx, GY); ctx.scale(sc, sc);
+    if (!lv) {
+      // furrowed mound + (in play) a little stake with a paper tag
+      ctx.fillStyle = INK.green; ctx.beginPath(); ctx.ellipse(0, 0, 0.7 * u, 0.24 * u, 0, Math.PI, TAU); ctx.fill();
+      ctx.strokeStyle = INK.dark; ctx.lineWidth = Math.max(1, u * 0.04);
+      for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(k * 0.28 * u - 0.12 * u, -0.06 * u); ctx.quadraticCurveTo(k * 0.28 * u, -0.2 * u, k * 0.28 * u + 0.12 * u, -0.06 * u); ctx.stroke(); }
+      if (!garden) {
+        ctx.fillStyle = INK.dark; ctx.fillRect(0.75 * u, -0.85 * u, Math.max(2, 0.06 * u), 0.85 * u);
+        ctx.fillStyle = INK.paper; ctx.strokeStyle = INK.dark; ctx.lineWidth = 1; rr(0.55 * u, -0.85 * u, 0.42 * u, 0.26 * u, 2); ctx.fill(); ctx.stroke();
+      }
+    } else if (t === 'berry') {
+      const r = (0.34 + 0.1 * lv) * u;
+      const blobs = [[-0.85, 0.55], [0.85, 0.55], [0, 0.9], [-0.45, 1.35], [0.5, 1.3], [0, 0.4]];
+      ctx.fillStyle = INK.green; ctx.beginPath(); for (const b of blobs) { ctx.moveTo(b[0] * r + r * 0.62, -b[1] * r); ctx.arc(b[0] * r, -b[1] * r, r * 0.62, 0, TAU); } ctx.fill();
+      ctx.fillStyle = INK.greenT; ctx.beginPath(); for (const b of blobs.slice(0, 4)) { ctx.moveTo(b[0] * r - r * 0.05, -b[1] * r - r * 0.2); ctx.arc(b[0] * r - r * 0.2, -b[1] * r - r * 0.2, r * 0.15, 0, TAU); } ctx.fill();
+      const ripe = S.pickedRun[i] && S.mode === 'play' ? 0 : PL.berry.seeds[lv - 1] + storedBerries(i, Date.now());
+      const n = Math.min(ripe, 18), br = Math.max(2.2, 0.075 * u);
+      if (n) pinkInk(() => { ctx.beginPath(); for (let k = 0; k < n; k++) { const a = k * 2.4 + i, d = 0.25 + (k % 4) * 0.22; const bx = Math.cos(a) * d * r * 1.3, by = -0.85 * r + Math.sin(a) * d * r * 0.95; ctx.moveTo(bx + br, by); ctx.arc(bx, by, br, 0, TAU); } }, true);
+    } else if (t === 'mush') {
+      const mt = S.mushT[i];
+      const sq = mt !== undefined && mt < 0.7 ? 1 - 0.4 * Math.cos(mt * TAU * 2.6) * Math.exp(-mt * 5) : 1;
+      const cw = (0.55 + lv * 0.08) * u, ch = (0.45 + lv * 0.05) * u * sq, stem = 0.45 * u * (0.7 + 0.3 * sq);
+      ctx.fillStyle = INK.green; rr(-0.12 * u, -stem, 0.24 * u, stem, 0.06 * u); ctx.fill();
+      ctx.save(); ctx.translate(0, -stem + 0.06 * u);
+      pinkInk(() => { ctx.beginPath(); ctx.ellipse(0, 0, cw, ch, 0, Math.PI, TAU); ctx.closePath(); }, false);
+      ctx.fillStyle = INK.paper; ctx.beginPath();
+      for (const d of [[-0.5, 0.35], [0.1, 0.62], [0.55, 0.3], [-0.15, 0.25]]) { const r = 0.07 * u * (lv > 1 ? 1.2 : 1); ctx.moveTo(d[0] * cw + 2 + r, -d[1] * ch - 1); ctx.arc(d[0] * cw + 2, -d[1] * ch - 1, r, 0, TAU); }
+      ctx.fill(); ctx.restore();
+      if (lv > 1) { ctx.fillStyle = INK.green; ctx.fillRect(-0.55 * u, -0.25 * u, 0.12 * u, 0.25 * u); pinkInk(() => { ctx.beginPath(); ctx.ellipse(-0.49 * u, -0.22 * u, 0.24 * u, 0.2 * u, 0, Math.PI, TAU); ctx.closePath(); }, false); }
+    } else if (t === 'tree') {
+      ctx.fillStyle = INK.dark; ctx.fillRect(-0.07 * u, -1.6 * u, 0.14 * u, 1.6 * u);
+      const cr = (0.75 + lv * 0.1) * u;
+      ctx.fillStyle = INK.green; ctx.beginPath(); ctx.arc(0, -2.05 * u, cr, 0, TAU); ctx.fill();
+      ctx.fillStyle = INK.greenT; ctx.beginPath(); ctx.arc(-cr * 0.35, -2.05 * u - cr * 0.35, cr * 0.25, 0, TAU); ctx.fill();
+      if (!(S.pickedRun[i] && S.mode === 'play')) {
+        const hs = Math.max(8, 0.32 * u), pts = lv > 1 ? [[-0.4, -0.1], [0.38, -0.3], [0.05, 0.38], [0.45, 0.35]] : [[-0.35, 0.1], [0.38, -0.2]];
+        for (const p of pts) pinkInk(() => heartPath(p[0] * cr, -2.05 * u + p[1] * cr, hs), true);
+      }
+    } else if (t === 'bridge') {
+      // a vine coil at the plot; the bridge itself is drawn over the chasm
+      ctx.strokeStyle = INK.green; ctx.lineWidth = Math.max(2, 0.08 * u);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(-0.4 * u, -0.6 * u, 0.4 * u, -0.9 * u, 0, -1.3 * u); ctx.stroke();
+      ctx.fillStyle = INK.green; ctx.beginPath(); ctx.ellipse(0.25 * u, -0.7 * u, 0.22 * u, 0.1 * u, -0.5, 0, TAU); ctx.ellipse(-0.22 * u, -1.0 * u, 0.2 * u, 0.09 * u, 0.5, 0, TAU); ctx.fill();
+      flower(0, -1.35 * u, Math.max(2, 0.07 * u));
+    }
+    ctx.restore();
+  }
+  function flower(x, y, r) {
+    pinkInk(() => { ctx.beginPath(); for (let k = 0; k < 5; k++) { const a = k * TAU / 5 - Math.PI / 2; ctx.moveTo(x + Math.cos(a) * r * 1.6 + r, y + Math.sin(a) * r * 1.6); ctx.arc(x + Math.cos(a) * r * 1.6, y + Math.sin(a) * r * 1.6, r, 0, TAU); } }, true);
+    ctx.fillStyle = INK.paper; ctx.beginPath(); ctx.arc(x, y, r * 0.7, 0, TAU); ctx.fill();
+  }
+  const sagAt = (h, x) => 0.32 * Math.sin(Math.PI * clamp((x - h.a) / (h.b - h.a), 0, 1));
+  function drawBridge(h) {
+    const u = cam.ppm, a = X(h.a), b = X(h.b), lv = lvOf(h.plot);
+    ctx.strokeStyle = INK.green; ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(1.5, 0.05 * u);
+    for (let x = h.a + 0.5; x < h.b; x += 1) { const sx = X(x), s = sagAt(h, x); ctx.beginPath(); ctx.moveTo(sx, GY + s * u); ctx.lineTo(sx, GY - (0.75 - s * 0.5) * u); ctx.stroke(); }
+    ctx.lineWidth = Math.max(3, 0.13 * u);
+    ctx.beginPath(); for (let k = 0; k <= 24; k++) { const x = lerp(h.a, h.b, k / 24); const sx = X(x), sy = GY + sagAt(h, x) * u; if (k) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); } ctx.stroke();
+    ctx.lineWidth = Math.max(1.5, 0.06 * u);
+    ctx.beginPath(); for (let k = 0; k <= 24; k++) { const x = lerp(h.a, h.b, k / 24); const sx = X(x), sy = GY - (0.75 - sagAt(h, x) * 0.5) * u; if (k) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); } ctx.stroke();
+    ctx.fillStyle = INK.green; ctx.fillRect(a - 3, GY - 0.95 * u, 5, 0.95 * u); ctx.fillRect(b - 2, GY - 0.95 * u, 5, 0.95 * u);
+    const nf = lv > 1 ? 8 : 4;
+    for (let k = 0; k < nf; k++) { const x = lerp(h.a + 1, h.b - 1, (k + 0.5) / nf); flower(X(x), GY - (0.75 - sagAt(h, x) * 0.5) * u, Math.max(2, 0.07 * u)); }
+  }
+
+  // ---------- hazards ----------
+  function drawBramble(h) {
+    const u = cam.ppm;
+    if (!h.loops) { const r = mulberry32(Math.floor(h.a * 977)); h.loops = []; const n = Math.max(3, Math.ceil((h.b - h.a) / 0.3)); for (let k = 0; k < n; k++) h.loops.push([lerp(h.a + 0.2, h.b - 0.2, k / (n - 1)) + (r() - 0.5) * 0.1, 0.27 + (r() - 0.5) * 0.12, 0.2 + r() * 0.14, 0.22 + r() * 0.08, r() * 3]); }
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = Math.max(1.6, 0.055 * u);
+    ctx.beginPath();
+    for (const l of h.loops) { const cx = X(l[0]), cy = Y(l[1]); ctx.moveTo(cx + l[2] * u, cy); ctx.ellipse(cx, cy, l[2] * u, l[3] * u, l[4], 0, TAU); }
+    ctx.stroke();
+    pinkInk(() => {
+      ctx.beginPath();
+      for (const l of h.loops) { const cx = X(l[0]), cy = Y(l[1] + l[3] * 0.9); const s = Math.max(3, 0.11 * u); ctx.moveTo(cx - s * 0.5, cy); ctx.lineTo(cx, cy - s * 1.3); ctx.lineTo(cx + s * 0.5, cy); }
+    }, false);
+  }
+  function drawStump(h) {
+    const u = cam.ppm, a = X(h.a), b = X(h.b), top = Y(1.9), w = b - a;
+    ctx.fillStyle = INK.dark;
+    ctx.beginPath(); ctx.moveTo(a - 0.15 * u, GY); ctx.lineTo(a, GY - 0.25 * u); ctx.lineTo(a, top); ctx.lineTo(b, top); ctx.lineTo(b, GY - 0.25 * u); ctx.lineTo(b + 0.15 * u, GY); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = INK.paper; ctx.lineWidth = Math.max(1, 0.03 * u);
+    ctx.beginPath(); ctx.moveTo(a + w * 0.3, top + 0.3 * u); ctx.lineTo(a + w * 0.28, GY - 0.3 * u); ctx.moveTo(a + w * 0.7, top + 0.6 * u); ctx.lineTo(a + w * 0.72, GY - 0.5 * u); ctx.stroke();
+    ctx.fillStyle = INK.paper; ctx.beginPath(); ctx.ellipse(a + w / 2, top, w / 2, 0.1 * u, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(a + w / 2, top, w * 0.3, 0.06 * u, 0, 0, TAU); ctx.moveTo(a + w / 2 + w * 0.12, top); ctx.ellipse(a + w / 2, top, w * 0.12, 0.025 * u, 0, 0, TAU); ctx.stroke();
+  }
+  function drawCrow(cx, cy, u, flap) {
+    ctx.fillStyle = INK.dark;
+    ctx.beginPath();
+    ctx.moveTo(cx - 0.55 * u, cy); ctx.lineTo(cx - 0.3 * u, cy - 0.13 * u); ctx.lineTo(cx + 0.2 * u, cy - 0.12 * u);
+    ctx.lineTo(cx + 0.55 * u, cy - 0.25 * u); ctx.lineTo(cx + 0.48 * u, cy + 0.04 * u); ctx.lineTo(cx + 0.1 * u, cy + 0.16 * u); ctx.lineTo(cx - 0.28 * u, cy + 0.1 * u); ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    if (flap) { ctx.moveTo(cx - 0.12 * u, cy - 0.08 * u); ctx.lineTo(cx + 0.28 * u, cy - 0.08 * u); ctx.lineTo(cx + 0.22 * u, cy - 0.52 * u); }
+    else { ctx.moveTo(cx - 0.12 * u, cy + 0.02 * u); ctx.lineTo(cx + 0.28 * u, cy + 0.02 * u); ctx.lineTo(cx + 0.14 * u, cy + 0.45 * u); }
+    ctx.closePath(); ctx.fill();
+    pinkInk(() => { ctx.beginPath(); ctx.arc(cx - 0.3 * u, cy - 0.03 * u, Math.max(1.6, 0.05 * u), 0, TAU); }, false);
+  }
+  function drawHazards(garden) {
+    const u = cam.ppm, lo = cam.x - 16, hi = cam.x + W / u + 2;
+    for (let i = hzFrom(lo); i < HZ.length && HZ[i].a < hi + 6; i++) {
+      const h = HZ[i];
+      if (h.k === 'bramble') drawBramble(h);
+      else if (h.k === 'stump') drawStump(h);
+      else if (h.k === 'chasm' && bridged(h.plot)) drawBridge(h);
+      else if (h.k === 'crow') {
+        const cx = garden ? h.x0 : crowX(h, B.x);
+        drawCrow(X(cx), Y(1.8 + Math.sin(T * 5 + h.a) * 0.04), u, Math.floor(T * 8 + h.a) % 2 === 0);
+      }
+    }
+  }
+
+  // ---------- runner ----------
+  const LEGS = [[[0.22, 0], [-0.18, -0.02]], [[0.08, -0.12], [-0.05, 0]], [[-0.18, -0.02], [0.22, 0]], [[-0.05, 0], [0.08, -0.12]]];
+  function drawSower(px, py, u, o) {
+    ctx.save(); ctx.translate(px, py);
+    if (o.rot) { ctx.translate(0, -0.4 * u); ctx.rotate(o.rot); ctx.translate(0, 0.4 * u); }
+    ctx.scale(o.sx || 1, o.sy || 1);
+    if (o.alpha !== undefined) ctx.globalAlpha = o.alpha;
+    const legs = o.air ? [[0.14, -0.12], [-0.1, -0.16]] : (o.stand ? [[0.1, 0], [-0.1, 0]] : LEGS[o.pose & 3]);
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = Math.max(2, 0.065 * u); ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0.07 * u, -0.28 * u); ctx.lineTo(legs[0][0] * u, legs[0][1] * u); ctx.lineTo(legs[0][0] * u + 0.08 * u, legs[0][1] * u);
+    ctx.moveTo(-0.07 * u, -0.28 * u); ctx.lineTo(legs[1][0] * u, legs[1][1] * u); ctx.lineTo(legs[1][0] * u + 0.08 * u, legs[1][1] * u);
+    ctx.stroke();
+    // seed sack on her back
+    ctx.fillStyle = INK.dark; ctx.beginPath(); ctx.arc(-0.3 * u, -0.5 * u, 0.15 * u, 0, TAU); ctx.fill();
+    // body: rounded teardrop
+    ctx.fillStyle = INK.green; ctx.beginPath();
+    ctx.moveTo(0.02 * u, -1.0 * u); ctx.quadraticCurveTo(0.34 * u, -0.78 * u, 0.3 * u, -0.52 * u);
+    ctx.ellipse(0, -0.52 * u, 0.3 * u, 0.26 * u, 0, 0, Math.PI);
+    ctx.quadraticCurveTo(-0.32 * u, -0.8 * u, 0.02 * u, -1.0 * u); ctx.fill();
+    pinkInk(() => { ctx.beginPath(); ctx.moveTo(-0.38 * u, -0.66 * u); ctx.lineTo(-0.2 * u, -0.6 * u); ctx.lineTo(-0.26 * u, -0.7 * u); ctx.closePath(); }, false);
+    // eye
+    ctx.fillStyle = INK.paper; ctx.beginPath(); ctx.arc(0.15 * u, -0.66 * u, Math.max(2, 0.085 * u), 0, TAU); ctx.fill();
+    ctx.fillStyle = INK.dark; ctx.beginPath(); ctx.arc(0.17 * u, -0.66 * u, Math.max(1.2, 0.045 * u), 0, TAU); ctx.fill();
+    if (o.hat !== false) drawHat(0, -0.82 * u + (o.bob || 0), u, 0);
+    ctx.restore();
+  }
+  function drawHat(x, y, u, rot) {
+    ctx.save(); ctx.translate(x, y); if (rot) ctx.rotate(rot);
+    ctx.save(); ctx.translate(2, -1); ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = INK.pink;
+    ctx.beginPath(); ctx.ellipse(0, 0, 0.55 * u, 0.085 * u, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, -0.02 * u, 0.27 * u, 0.26 * u, 0, Math.PI, TAU); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = INK.dark; ctx.fillRect(-0.26 * u, -0.1 * u, 0.52 * u, Math.max(2, 0.06 * u));
+    ctx.restore();
+  }
+  function drawRunner() {
+    const u = cam.ppm * 1.2;
+    let sag = 0;
+    if (B.ground) { for (let i = S.hzLo; i < HZ.length && HZ[i].a < B.x; i++) { const h = HZ[i]; if (h.k === 'chasm' && B.x < h.b && bridged(h.plot)) sag = sagAt(h, B.x); } }
+    const px = X(B.x), py = Y(B.y) + sag * cam.ppm;
+    if (S.mode === 'title') { drawSower(px, py, u, { stand: true, sy: 1 + Math.sin(T * 3) * 0.02, bob: Math.sin(T * 3) * 1.5 }); return; }
+    if (S.mode === 'over' || S.dying >= 0) { drawSower(px, py, u, { stand: true, rot: B.rot, hat: false, air: !B.ground && !B.fall && S.dying >= 0 }); return; }
+    let sx = 1, sy = 1;
+    if (S.sq) { const tt = S.sq.t; if (S.sq.k === 'up' && tt < 0.08) { sx = 0.9; sy = 1.12; } else if (S.sq.k === 'down' && tt < 0.09) { sx = 1.15; sy = 0.85; } }
+    const pose = Math.floor(S.legPh) & 3;
+    const alpha = S.inv > 0 && Math.floor(S.inv / 0.1) % 2 === 0 ? 0.3 : 1;
+    if (S.rescue) {
+      const r = S.rescue, e = clamp(r.t / 1.0, 0, 1);
+      drawSower(px, py, u, { air: true, alpha: 1, rot: Math.sin(e * TAU) * 0.15 });
+      // thistledown puff
+      const cx = px + 0.1 * u, cy = py - 1.75 * u, rad = 0.62 * u;
+      ctx.strokeStyle = INK.dark; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px + 0.05 * u, py - 1.0 * u); ctx.lineTo(cx, cy); ctx.stroke();
+      ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = PAT.pink2; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, TAU); ctx.fill(); ctx.restore();
+      ctx.beginPath(); for (let k = 0; k < 10; k++) { const a = k * TAU / 10 + T; ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad); } ctx.stroke();
+      return;
+    }
+    drawSower(px, py, u, { pose, air: !B.ground, sx, sy, alpha, bob: B.ground ? ((pose & 1) ? -2 : 0) : 0 });
+  }
+
+  // ---------- garden overlay: stakes and tag card ----------
+  function drawStakes() {
+    const u = cam.ppm, mp = maxPlot();
+    const i0 = Math.max(1, Math.floor(cam.x / 40)), i1 = Math.ceil((cam.x + W / u) / 40);
+    let anyLeft = false, anyRight = false;
+    for (let i = 1; i <= mp; i++) {
+      if (lvOf(i) < maxLv(i) && nextCost(i) <= bank) { const sx = X(40 * i); if (sx < 0) anyLeft = true; else if (sx > W) anyRight = true; }
+    }
+    for (let i = i0; i <= Math.min(i1, mp + 1); i++) {
+      const sx = X(40 * i), sy = GY + 40, lv = lvOf(i), locked = i > mp, full = lv >= maxLv(i);
+      const afford = !locked && !full && nextCost(i) <= bank;
+      const pulse = afford ? 1 + 0.08 * Math.sin(T * 6) : 1;
+      ctx.save(); ctx.translate(sx, sy); ctx.scale(pulse, pulse);
+      ctx.fillStyle = INK.dark; ctx.fillRect(-2, -26, 4, 54);
+      ctx.beginPath(); ctx.moveTo(-2, 28); ctx.lineTo(0, 34); ctx.lineTo(2, 28); ctx.fill();
+      // tag
+      ctx.save(); ctx.rotate(-0.08);
+      if (afford) { pinkInk(() => rr(-22, -18, 44, 26, 3), true); }
+      else { ctx.fillStyle = locked ? INK.dark : INK.paper; rr(-22, -18, 44, 26, 3); ctx.fill(); }
+      ctx.strokeStyle = INK.dark; ctx.lineWidth = 1.5; rr(-22, -18, 44, 26, 3); ctx.stroke();
+      ctx.fillStyle = afford ? INK.dark : (locked ? INK.green : INK.dark); ctx.beginPath(); ctx.arc(-15, -5, 2, 0, TAU); ctx.fill();
+      if (locked) txt(String(40 * i), 4, 1, 11, INK.paper, 'center', 0.05);
+      else if (!lv) { ctx.strokeStyle = INK.dark; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-3, -5); ctx.lineTo(11, -5); ctx.moveTo(4, -12); ctx.lineTo(4, 2); ctx.stroke(); }
+      else { for (let k = 0; k < maxLv(i); k++) { ctx.beginPath(); ctx.arc(-4 + k * 8, -5, 3, 0, TAU); if (k < lv) { ctx.fillStyle = INK.green; ctx.fill(); } else { ctx.strokeStyle = INK.dark; ctx.lineWidth = 1.2; ctx.stroke(); } } }
+      ctx.restore(); ctx.restore();
+    }
+    const ay = GY + 40, p = 0.7 + 0.3 * Math.sin(T * 6);
+    const arrow = (x, d) => pinkInk(() => { ctx.beginPath(); ctx.moveTo(x, ay - 10 * p); ctx.lineTo(x + d * 12, ay); ctx.lineTo(x, ay + 10 * p); ctx.closePath(); }, true);
+    if (anyLeft) arrow(16, -1);
+    if (anyRight) arrow(W - 16, 1);
+  }
+  function wrap(s, maxW, px) {
+    ctx.font = fontStr(px); if (hasLS) ctx.letterSpacing = (0.06 * px).toFixed(1) + 'px';
+    const words = s.split(' '), lines = []; let cur = '';
+    for (const w of words) { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t; }
+    if (cur) lines.push(cur); return lines;
+  }
+  function effect(t, lv) {
+    if (t === 'berry') return `BURSTS ${PL.berry.seeds[lv - 1]} SEEDS AS YOU PASS, PLUS UP TO ${PL.berry.cap[lv - 1]} MORE THAT RIPEN WHILE YOU ARE AWAY.`;
+    if (t === 'mush') return lv === 1 ? 'BOUNCES YOU HIGH OVER THE STUMP JUST AHEAD.' : 'ADDS AN ARC OF 6 SEEDS AT THE TOP OF THE BOUNCE.';
+    if (t === 'bridge') return lv === 1 ? 'SPANS THE CHASM AHEAD SO YOU RUN RIGHT ACROSS.' : 'HANGS 8 SEEDS ALONG THE BRIDGE.';
+    return lv === 1 ? 'GIVES BACK 1 HEART AS YOU PASS.' : 'GIVES BACK 2 HEARTS AS YOU PASS.';
+  }
+  function drawCard() {
+    const c = cardRect(), i = S.card.i, t = plotType(i), lv = lvOf(i), mx = maxLv(i), locked = i > maxPlot(), full = lv >= mx;
+    const cost = full ? 0 : PL[t].cost[lv], afford = !locked && !full && bank >= cost;
+    const k = Math.min(1, S.card.t / 0.12), sc = 0.9 + 0.1 * eo(k);
+    const nx = S.card.nope ? Math.sin(S.card.nope * 60) * 5 * (S.card.nope / 0.3) : 0;
+    // string to the stake
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(c.sx, GY + 16); ctx.lineTo(clamp(c.sx, c.x + 20, c.x + c.w - 20), c.y + c.h); ctx.stroke();
+    ctx.save(); ctx.translate(c.x + c.w / 2 + nx, c.y + c.h); ctx.scale(sc, sc); ctx.rotate(-0.012); ctx.translate(-c.w / 2, -c.h);
+    ctx.fillStyle = INK.paper; ctx.strokeStyle = INK.dark; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(c.w, 0); ctx.lineTo(c.w, c.h); ctx.lineTo(14, c.h); ctx.lineTo(0, c.h - 14); ctx.lineTo(0, 14); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.lineWidth = 1; ctx.beginPath(); ctx.rect(6, 6, c.w - 12, c.h - 12); ctx.stroke();
+    txt(PL[t].name, 16, 34, 22, INK.dark, 'left', 0.03);
+    for (let q = 0; q < mx; q++) { const x = c.w - 22 - (mx - 1 - q) * 14; ctx.beginPath(); ctx.arc(x, 26, 5, 0, TAU); if (q < lv) { ctx.fillStyle = INK.green; ctx.fill(); } else { ctx.strokeStyle = INK.dark; ctx.lineWidth = 1.5; ctx.stroke(); } }
+    const status = locked ? `PLOT AT ${40 * i} M` : (lv ? `LEVEL ${lv} OF ${mx} · ${40 * i} M` : `BARE PLOT · ${40 * i} M`);
+    txt(status, 16, 54, 12, INK.green, 'left', 0.12);
+    const desc = full ? effect(t, lv) : 'NEXT: ' + effect(t, lv + 1);
+    const lines = wrap(desc, c.w - 32, 13).slice(0, 3);
+    lines.forEach((ln, q) => txt(ln, 16, 76 + q * 16, 13, INK.dark, 'left', 0.06));
+    const bx = 12, by = c.h - 50, bw = c.w - 24, bh = 38;
+    let label;
+    if (locked) label = `RUN PAST ${40 * i - 40} M TO UNLOCK`;
+    else if (full) label = 'FULL GROWN';
+    else if (afford) label = (lv ? 'GROW' : 'PLANT') + ' · ' + cost + ' SEEDS';
+    else label = `NEED ${cost - bank} MORE SEEDS`;
+    if (afford) { pinkInk(() => rr(bx, by, bw, bh, 4), false); }
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = 2; rr(bx, by, bw, bh, 4); ctx.stroke();
+    txt(label, c.w / 2, by + 25, 16, afford ? INK.dark : (full ? INK.green : INK.dark), 'center', 0.1);
+    ctx.restore();
+  }
+
+  // ---------- world ----------
+  function drawWorld(garden) {
+    const u = cam.ppm, lo = cam.x - 4, hi = cam.x + W / u + 4;
+    drawGround();
+    // distance posts every 100 m, start post, best flag
+    for (let d = Math.max(0, Math.ceil(lo / 100) * 100); d < hi; d += 100) {
+      const sx = X(d - 2.2);
+      ctx.fillStyle = INK.dark; ctx.fillRect(sx - 1.5, GY - 0.9 * u, 3, 0.9 * u);
+      ctx.fillStyle = INK.paper; ctx.strokeStyle = INK.dark; ctx.lineWidth = 1.5; rr(sx - 0.42 * u, GY - 1.18 * u, 0.84 * u, 0.36 * u, 2); ctx.fill(); ctx.stroke();
+      txt(String(d), sx, GY - 0.9 * u, Math.max(9, 0.27 * u), INK.dark, 'center', 0);
+    }
+    if (best >= 10 && best > lo && best < hi) {
+      const sx = X(best);
+      ctx.fillStyle = INK.dark; ctx.fillRect(sx - 1.5, GY - 2.1 * u, 3, 2.1 * u);
+      pinkInk(() => { ctx.beginPath(); ctx.moveTo(sx + 1.5, GY - 2.1 * u); ctx.lineTo(sx + 0.9 * u, GY - 1.85 * u); ctx.lineTo(sx + 1.5, GY - 1.6 * u); ctx.closePath(); }, false);
+      txt('BEST', sx + 4, GY - 2.2 * u, Math.max(9, 0.28 * u), INK.dark, 'left', 0.1);
+    }
+    for (let i = Math.max(1, Math.floor(lo / 40)); 40 * i < hi; i++) drawPlot(i, garden);
+    drawHazards(garden);
+    // seeds
+    const bobT = T * 3;
+    const drawSeeds = (arr) => {
+      for (let i = lowerBound(arr, lo); i < arr.length && arr[i].x < hi; i++) {
+        const s = arr[i]; if (!garden && s.got === S.runId) continue;
+        seedShape(X(s.x), Y(s.y) + Math.sin(bobT + s.x) * 2, Math.max(10, 0.3 * u), -0.5 + Math.sin(bobT * 0.7 + s.x) * 0.2);
+      }
+    };
+    drawSeeds(SD); drawSeeds(PS);
+    // sprouts behind her
+    for (const s of sprouts) {
+      const sx = X(s.x); if (sx < -10) continue; const g = Math.min(1, s.t / 0.3), hh = 0.22 * u * g;
+      ctx.strokeStyle = INK.green; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(sx, GY); ctx.lineTo(sx, GY - hh); ctx.stroke();
+      ctx.fillStyle = INK.green; ctx.beginPath(); ctx.ellipse(sx - 0.07 * u * g, GY - hh, 0.07 * u * g + 0.1, 0.035 * u * g + 0.1, 0.5, 0, TAU); ctx.ellipse(sx + 0.07 * u * g, GY - hh, 0.07 * u * g + 0.1, 0.035 * u * g + 0.1, -0.5, 0, TAU); ctx.fill();
+    }
+    drawHintsWorld();
+    drawRunner();
+    if (S.hat) drawHat(X(S.hat.x), Y(S.hat.y), u * 1.2, S.hat.r);
+    for (const p of worldFx) {
+      if (p.k === 'dust') { ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), Math.max(2, 0.07 * u) * (1 - p.t / p.life * 0.5), 0, TAU); ctx.fill(); }
+    }
+    if (S.stamp) {
+      const P = 40 * S.stamp.i, t = S.stamp.t, sx = X(P), sy = GY - 0.6 * u;
+      if (t < 0.12) {
+        const r = (t < 0.06 ? 0.7 : 1.15) * u, n = 9, dr = t < 0.06 ? 3 : 4.5;
+        pinkInk(() => { ctx.beginPath(); for (let k = 0; k < n; k++) { const a = k * TAU / n + (t < 0.06 ? 0 : 0.3); ctx.moveTo(sx + Math.cos(a) * r + dr, sy + Math.sin(a) * r * 0.7); ctx.arc(sx + Math.cos(a) * r, sy + Math.sin(a) * r * 0.7, dr, 0, TAU); } }, false);
+      }
+    }
+    for (const f of floats) {
+      const k = f.t / 1.2; ctx.globalAlpha = 1 - k * k;
+      inkText(f.s, X(f.x), Y(f.y) - k * 30, 20, 'center', INK.dark);
+      ctx.globalAlpha = 1;
+    }
+  }
+  function drawHintsWorld() {
+    const u = cam.ppm, lo = cam.x, hi = cam.x + W / u, play = S.mode === 'play' && S.dying < 0;
+    for (let i = hzFrom(lo - 16); i < HZ.length && HZ[i].a < hi; i++) {
+      const h = HZ[i];
+      if (!play) { if (h.k === 'chasm' && !bridged(h.plot) && (S.mode !== 'over' || S.overT > 0.7)) inkText('NEEDS A VINE BRIDGE', X((h.a + h.b) / 2), Y(2.2), 15, 'center', INK.dark, true); continue; }
+      if (h.k === 'stump' && !hints.hold && h.b > B.x && !mushAt(h.a - 5)) { const p = 1 + 0.06 * Math.sin(T * 8); ctx.save(); ctx.translate(X(h.a + 0.4), Y(2.55)); ctx.scale(p, p); inkText('HOLD', 0, 0, 22, 'center', INK.dark); ctx.restore(); }
+      if (h.k === 'chasm' && !bridged(h.plot) && h.b > B.x) inkText('TOO WIDE: PLANT A BRIDGE', X((h.a + h.b) / 2), Y(2.4), 18, 'center', INK.dark, true);
+      if (h.k === 'crow' && !hints.crow && crowX(h, B.x) > B.x) inkText('LET IT PASS', X(crowX(h, B.x)), Y(2.6), 18, 'center', INK.dark);
+    }
+  }
+
+  // ---------- screens ----------
+  function drawHUD() {
+    const r = W - 18, d = Math.floor(S.maxX);
+    ctx.font = fontStr(18); if (hasLS) ctx.letterSpacing = '0px';
+    const mW = ctx.measureText('M').width;
+    inkText(String(d), r - mW - 6, ST + 72, 64, 'right', INK.green, true);
+    txt('M', r, ST + 72, 18, INK.dark, 'right', 0, true);
+    for (let k = 0; k < 3; k++) heartIcon(r - 64 + k * 26, ST + 96, 20, k < S.hearts, k === S.hearts - 1 || k === S.hearts ? S.heartPop : 0);
+    const sc = 1 + S.pop * 0.2;
+    ctx.save(); ctx.translate(r, ST + 132); ctx.scale(sc, sc);
+    txt(String(S.shown), 0, 0, 22, INK.dark, 'right', 0, true);
+    ctx.font = fontStr(22); const tw = ctx.measureText(String(S.shown)).width;
+    ctx.fillStyle = INK.paper; ctx.beginPath(); ctx.arc(-tw - 11, -8, 11, 0, TAU); ctx.fill();
+    seedShape(-tw - 12, -8, 16, -0.4);
+    ctx.restore();
+    S.hudSeed = { x: r - 30, y: ST + 124 };
+    for (const f of flyers) {
+      if (f.t < 0) continue;
+      const e = eio(Math.min(1, f.t / f.dur));
+      const x = lerp(f.x0, S.hudSeed.x, e), y = lerp(f.y0, S.hudSeed.y, e) - Math.sin(Math.PI * e) * 70;
+      seedShape(x, y, 13, e * 6);
+    }
+  }
+  let titleBottom = 0;
+  function drawTitleWord() {
+    const top = Math.max(ST + 64, H * 0.08);
+    let fs = Math.min(W * 0.46, H * 0.17);
+    ctx.font = fontStr(fs); if (hasLS) ctx.letterSpacing = '0px';
+    const mw = Math.max(ctx.measureText('SOW').width, ctx.measureText('FAR').width);
+    if (mw > W * 0.66) fs *= W * 0.66 / mw;
+    const b1 = top + fs * 0.8, b2 = b1 + fs * 0.84;
+    inkText('SOW', 22, b1, fs, 'left', INK.green);
+    inkText('FAR', 22 + fs * 0.42, b2, fs, 'left', INK.green);
+    titleBottom = b2;
+  }
+  function drawTitle() {
+    let y = titleBottom + 34;
+    txt(best ? `BEST ${best} M` : 'RUN THE LANE. PLANT THE PATH.', 24, y, 13, INK.dark, 'left', 0.12);
+    txt(`SEED BANK ${bank}`, 24, y + 20, 13, INK.dark, 'left', 0.12);
+    const p = 1 + 0.04 * Math.sin(T * 4);
+    ctx.save(); ctx.translate(W / 2, H * 0.55); ctx.scale(p, p); inkText('TAP TO RUN', 0, 0, 30, 'center', INK.dark, true); ctx.restore();
+    if (!hints.ran) txt('HOLD TO JUMP HIGHER', W / 2, H * 0.55 + 28, 13, INK.dark, 'center', 0.12, true);
+    else if (Object.keys(plots).length || bank >= 20) txt('DRAG THE LANE TO VISIT YOUR GARDEN', W / 2, H * 0.55 + 28, 13, INK.dark, 'center', 0.12, true);
+  }
+  function drawOver() {
+    const k = clamp((S.overT - 0.15) / 0.16, 0, 1), sc = S.overT < 0.15 ? 0 : 1.3 - 0.3 * eo(k);
+    if (sc > 0) {
+      const w = Math.min(W - 48, 340), h0 = H * 0.18, h1 = H * 0.40, hh = h1 - h0;
+      ctx.save(); ctx.translate(W / 2, (h0 + h1) / 2); ctx.rotate(-0.04); ctx.scale(sc, sc);
+      if (S.card) ctx.globalAlpha = 0.35;
+      ctx.fillStyle = INK.paper; ctx.fillRect(-w / 2, -hh / 2, w, hh);
+      ctx.strokeStyle = INK.dark; ctx.lineWidth = 3; ctx.strokeRect(-w / 2, -hh / 2, w, hh);
+      ctx.lineWidth = 1; ctx.strokeRect(-w / 2 + 6, -hh / 2 + 6, w - 12, hh - 12);
+      const big = Math.min(64, hh * 0.36);
+      txt('THE RUN ENDED AT', 0, -hh / 2 + 28, 13, INK.dark, 'center', 0.12);
+      inkText(S.dist + ' M', 0, -hh / 2 + 28 + big * 0.95, big, 'center');
+      const y2 = -hh / 2 + 28 + big * 0.95 + 26;
+      if (S.newBest) inkText('NEW BEST', 0, y2, 18, 'center', INK.dark); else txt('BEST ' + best + ' M', 0, y2, 16, INK.dark, 'center', 0.12);
+      txt('+' + S.gained + ' SEEDS  ·  BANK ' + bank, 0, Math.min(hh / 2 - 14, y2 + 24), 14, INK.green, 'center', 0.1);
+      ctx.restore();
+    }
+    if (!S.card && S.overT > 0.3) {
+      const p = 1 + 0.04 * Math.sin(T * 4);
+      ctx.save(); ctx.translate(W / 2, H * 0.55); ctx.scale(p, p); inkText('TAP TO RUN AGAIN', 0, 0, 26, 'center', INK.dark, true); ctx.restore();
+      if (!hints.plant && bank >= 20) txt('OR TAP A PINK STAKE TO PLANT', W / 2, H * 0.55 + 26, 13, INK.dark, 'center', 0.12, true);
+    }
+  }
+  function drawPaused() {
+    ctx.save(); ctx.globalAlpha = 0.6; ctx.fillStyle = INK.paper; ctx.fillRect(0, 0, W, H); ctx.restore();
+    ctx.save(); ctx.translate(W / 2, H * 0.4); ctx.rotate(-0.05);
+    ctx.strokeStyle = INK.dark; ctx.lineWidth = 3; ctx.strokeRect(-110, -44, 220, 80);
+    inkText('PAUSED', 0, 14, 44, 'center');
+    ctx.restore();
+    txt('TAP TO KEEP RUNNING', W / 2, H * 0.4 + 70, 13, INK.dark, 'center', 0.12);
+  }
+
+  function draw() {
+    ctx.save();
+    if (S.shakeT > 0) ctx.translate((Math.random() - 0.5) * 2 * S.shakeA, (Math.random() - 0.5) * 2 * S.shakeA);
+    const garden = S.mode === 'title' || S.mode === 'over';
+    drawBackdrop();
+    if (S.mode === 'title') drawTitle();
+    drawWorld(garden);
+    drawSoil();
+    if (garden && (S.mode === 'title' || S.overT > 0.5)) drawStakes();
+    if (S.mode === 'over') drawOver();
+    if (S.mode === 'play' || S.mode === 'paused') drawHUD();
+    if (garden && S.card) drawCard();
+    if (S.mode === 'paused') drawPaused();
+    ctx.restore();
+    ctx.fillStyle = GRAIN; ctx.fillRect(0, 0, W, H);
+  }
+
+  // ---------- loop ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(1 / 30, Math.max(0, (now - last) / 1000)); last = now;
+    if (S.sq) S.sq.t += dt;
+    update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  window.__game = {
+    state: () => ({ mode: S.mode, score: S.mode === 'title' ? 0 : (S.mode === 'over' ? S.dist : Math.floor(S.maxX)), best, bank, hearts: S.hearts, seeds: S.seeds }),
+    demo: (on) => { autopilot = !!on; held = false; AP.plan = null; AP.press = 0; },
+    course: (n) => HZ.slice(0, n || 60).map((h) => h.k[0] + Math.round(h.a)).join(' '),
+    dbg: () => ({ near: HZ.filter((h) => h.a > B.x && h.a < B.x + 12).map((h) => h.k), x: +B.x.toFixed(2), y: +B.y.toFixed(2), ground: B.ground, hz: HZ.length, plots, picked, stakes: Array.from({ length: maxPlot() + 1 }, (_, k) => k + 1).map((i) => ({ i, x: Math.round(X(40 * i)), y: GY + 40 })).filter((p) => p.x > 0 && p.x < W) })
+  };
+})();
+</script>
+</body>
+</html>

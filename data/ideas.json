@@ -1,52 +1,62 @@
 [
-    {
-        "date": "2026-10-21",
-        "trend": "one-touch flyers",
-        "evidence": "seed game, evergreen genre",
-        "concept": "paper lantern with a flame-as-fuel meter",
-        "name": "Lantern Drift",
-        "slug": "lantern-drift",
-        "status": "built",
-        "why": "seed game; app record created as \"Lantern Drift: Firefly Lake\"; back in the pool after Tom chose to ship Bank Shot first"
-    },
-    {
-        "date": "2026-10-21",
-        "trend": "arrow / one-direction puzzles",
-        "evidence": "FoxData July 2026: arrow puzzle trend strong, several similar titles climbing (no chart snapshots yet; industry reports only)",
-        "concept": "Hex riverbank of swallows; tap a bird with a clear line to leave, lined-up birds fly as a flock; endless arrivals until the bank is full",
-        "name": "Burrowbank",
-        "slug": "burrowbank",
-        "status": "built",
-        "why": "QA passed"
-    },
-    {
-        "date": "2026-10-24",
-        "trend": "merge + progression",
-        "evidence": "Similarweb US iPhone top grossing Oct 19 2026 lists a merge-and-story title in the top 5; AppMagic H1 2026 merge +74% YoY (sources conflict on revenue). No chart snapshots in data/trends yet.",
-        "concept": "Potter's studio merge puzzle: clay dries over time, merges splash water to revive neighbours, amphoras get fired onto a shelf",
-        "name": "Wheelthrown",
-        "slug": "wheelthrown",
-        "status": "built",
-        "why": "QA passed"
-    },
-    {
-        "date": "2026-10-26",
-        "trend": "sort puzzles",
-        "evidence": "Mobidictum: sort puzzle passed blast as third-largest puzzle subgenre by IAP revenue at start of 2026; PocketGamer.biz H1 2026 puzzle revenue +20% YoY. No chart snapshots in data/trends yet.",
-        "concept": "Pancake stacks sorted by flavour; swipe a spatula up to flip part of a stack (reverses order, costs 1s) against a melting butter clock",
-        "name": "Griddlewise",
-        "slug": "griddlewise",
-        "status": "built",
-        "why": "QA passed"
-    },
-    {
-        "date": "2026-10-31",
-        "trend": "block puzzle + roguelike deck-builder",
-        "evidence": "Scout: AppMagic H1 2026 block puzzle releases +89% YoY; Mobi.gg Oct 2026 deck-builder picks (no chart snapshots available)",
-        "concept": "Stained glass block puzzle where pieces come from a deck you build between windows; arched boards, colour-purity scoring, lasting boons",
-        "name": "Glasswright",
-        "slug": "glasswright",
-        "status": "built",
-        "why": "QA passed"
-    }
+  {
+    "date": "2026-10-21",
+    "trend": "one-touch flyers",
+    "evidence": "seed game, evergreen genre",
+    "concept": "paper lantern with a flame-as-fuel meter",
+    "name": "Lantern Drift",
+    "slug": "lantern-drift",
+    "status": "built",
+    "why": "seed game; app record created as \"Lantern Drift: Firefly Lake\"; back in the pool after Tom chose to ship Bank Shot first"
+  },
+  {
+    "date": "2026-10-21",
+    "trend": "arrow / one-direction puzzles",
+    "evidence": "FoxData July 2026: arrow puzzle trend strong, several similar titles climbing (no chart snapshots yet; industry reports only)",
+    "concept": "Hex riverbank of swallows; tap a bird with a clear line to leave, lined-up birds fly as a flock; endless arrivals until the bank is full",
+    "name": "Burrowbank",
+    "slug": "burrowbank",
+    "status": "built",
+    "why": "QA passed"
+  },
+  {
+    "date": "2026-10-24",
+    "trend": "merge + progression",
+    "evidence": "Similarweb US iPhone top grossing Oct 19 2026 lists a merge-and-story title in the top 5; AppMagic H1 2026 merge +74% YoY (sources conflict on revenue). No chart snapshots in data/trends yet.",
+    "concept": "Potter's studio merge puzzle: clay dries over time, merges splash water to revive neighbours, amphoras get fired onto a shelf",
+    "name": "Wheelthrown",
+    "slug": "wheelthrown",
+    "status": "built",
+    "why": "QA passed"
+  },
+  {
+    "date": "2026-10-26",
+    "trend": "sort puzzles",
+    "evidence": "Mobidictum: sort puzzle passed blast as third-largest puzzle subgenre by IAP revenue at start of 2026; PocketGamer.biz H1 2026 puzzle revenue +20% YoY. No chart snapshots in data/trends yet.",
+    "concept": "Pancake stacks sorted by flavour; swipe a spatula up to flip part of a stack (reverses order, costs 1s) against a melting butter clock",
+    "name": "Griddlewise",
+    "slug": "griddlewise",
+    "status": "built",
+    "why": "QA passed"
+  },
+  {
+    "date": "2026-10-31",
+    "trend": "block puzzle + roguelike deck-builder",
+    "evidence": "Scout: AppMagic H1 2026 block puzzle releases +89% YoY; Mobi.gg Oct 2026 deck-builder picks (no chart snapshots available)",
+    "concept": "Stained glass block puzzle where pieces come from a deck you build between windows; arched boards, colour-purity scoring, lasting boons",
+    "name": "Glasswright",
+    "slug": "glasswright",
+    "status": "built",
+    "why": "QA passed"
+  },
+  {
+    "date": "2026-11-02",
+    "trend": "hybrid-casual idle/meta-progression runner",
+    "evidence": "Scout: AppMagic H1 2026 hybrid-casual in-app revenue +20% to $4.2B; no chart snapshots in data/trends yet.",
+    "concept": "Endless same-every-time lane runner where seeds are planted on the course itself: vine bridges, spring mushrooms, heartfruit, berry bushes that ripen while away; riso zine look",
+    "name": "Sow Far",
+    "slug": "sow-far",
+    "status": "built",
+    "why": "QA passed"
+  }
 ]

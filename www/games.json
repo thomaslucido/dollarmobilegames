@@ -59,5 +59,15 @@
     "added": "2026-10-31",
     "accent": "#c8203f",
     "status": "built"
+  },
+  {
+    "slug": "sow-far",
+    "name": "Sow Far",
+    "tagline": "Run the lane. Plant the path. Get a little farther.",
+    "genre": "idle garden runner",
+    "bundleId": "com.thomaslucido.sowfar",
+    "added": "2026-11-02",
+    "accent": "#ff48b0",
+    "status": "built"
   }
 ]
