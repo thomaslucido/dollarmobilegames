@@ -2,13 +2,14 @@
   {
     "slug": "bank-shot",
     "name": "Bank Shot",
-    "tagline": "Slingshot mini golf with a pinball heart. 100 levels.",
+    "tagline": "Slingshot mini golf with a pinball heart. Five themes.",
     "genre": "slingshot mini golf",
     "bundleId": "com.thomaslucido.bankshot",
     "added": "2026-10-21",
     "accent": "#38e1ff",
     "status": "submitted",
-    "custom": true
+    "custom": true,
+    "gameCenter": true
   },
   {
     "slug": "lantern-drift",
