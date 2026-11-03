@@ -19,6 +19,10 @@ on:
         description: "Submit for review automatically? Use false to finish the version page by hand first."
         required: false
         default: "true"
+      skip_screenshots:
+        description: "Skip uploading screenshots (true if they're already in App Store Connect)."
+        required: false
+        default: "false"
 permissions:
   contents: write
   issues: write
@@ -76,6 +80,7 @@ jobs:
       SLUG: ${{ needs.gate.outputs.slug }}
       APP_VERSION: ${{ inputs.version || '1.0' }}
       SUBMIT: ${{ inputs.submit || 'true' }}
+      SKIP_SCREENSHOTS: ${{ inputs.skip_screenshots || 'false' }}
       BUILD_NUMBER: ${{ github.run_number }}${{ github.run_attempt }}
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       GH_TOKEN: ${{ github.token }}
