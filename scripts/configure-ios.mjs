@@ -31,3 +31,23 @@ console.log('iOS project configured (iPhone only, portrait, no encryption, team'
 // App privacy manifest (declares no tracking, no data collection, UserDefaults reason CA92.1).
 // Fastfile adds it to the Xcode target's resources.
 copyFileSync('ios-extras/PrivacyInfo.xcprivacy', 'ios/App/App/PrivacyInfo.xcprivacy');
+
+// Game Center (games with "gameCenter": true in www/games.json): local Capacitor plugin + entitlement.
+// The Swift files are added to the App target by the Fastfile.
+import { readFileSync as rf, existsSync as ex } from 'node:fs';
+const gcSlug = process.env.SLUG;
+const gcGame = gcSlug ? JSON.parse(rf('www/games.json', 'utf8')).find((g) => g.slug === gcSlug) : null;
+if (gcGame && gcGame.gameCenter) {
+  for (const f of ['GameCenterPlugin.swift', 'GameViewController.swift', 'App.entitlements']) copyFileSync(`ios-extras/gamecenter/${f}`, `ios/App/App/${f}`);
+  const sbPath = 'ios/App/App/Base.lproj/Main.storyboard';
+  if (ex(sbPath)) {
+    let sb = readFileSync(sbPath, 'utf8');
+    sb = sb.replace(/customClass="CAPBridgeViewController" customModule="Capacitor"/, 'customClass="GameViewController" customModule="App" customModuleProvider="target"');
+    if (!sb.includes('GameViewController')) throw new Error('Could not point Main.storyboard at GameViewController');
+    writeFileSync(sbPath, sb);
+  }
+  let p2 = readFileSync(pbxPath, 'utf8');
+  if (!p2.includes('CODE_SIGN_ENTITLEMENTS')) p2 = p2.replace(/(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)/g, '$1\n\t\t\t\tCODE_SIGN_ENTITLEMENTS = App/App.entitlements;');
+  writeFileSync(pbxPath, p2);
+  console.log('Game Center enabled for', gcSlug);
+}

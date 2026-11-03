@@ -44,8 +44,9 @@ const files = {
   'name.txt': store.appName, 'subtitle.txt': store.subtitle, 'description.txt': store.description,
   'keywords.txt': store.keywords, 'promotional_text.txt': store.promo,
   'support_url.txt': `${base}/support.html`, 'privacy_url.txt': `${base}/privacy.html`,
-  'marketing_url.txt': `${base}/games/${slug}/index.html`,
+  'marketing_url.txt': store.marketingUrl || `${base}/games/${slug}/index.html`,
 };
+if (store.whatsNew) files['release_notes.txt'] = store.whatsNew;
 for (const [f, v] of Object.entries(files)) writeFileSync(`${md}/${f}`, v);
 writeFileSync('fastlane/metadata/copyright.txt', `${new Date().getFullYear()} Tom Lucido`);
 writeFileSync('fastlane/metadata/primary_category.txt', 'GAMES');
@@ -64,7 +65,9 @@ function reviewNotes() {
     `1. Accounts, user content, paid content: ${store.appName} has no account registration or login, no user-generated content, and no paid content or In-App Purchases inside the app.`,
     `2. Purpose and audience: a casual game for all ages (4+). ${about} It is a paid app ($0.99) with no ads.`,
     '3. Setup: none. No login, credentials or sample files are needed. Open the app and tap to start.',
-    '4. External services: none. The game runs entirely on the device and works offline. It makes no network requests and uses no analytics, ads, authentication, payment processors or AI services. Progress is saved only on the device.',
+    game.gameCenter
+      ? '4. External services: Apple Game Center only, for an optional leaderboard (best score). Otherwise the game runs entirely on the device and works offline, with no analytics, ads, payment processors or AI services. Progress is saved only on the device.'
+      : '4. External services: none. The game runs entirely on the device and works offline. It makes no network requests and uses no analytics, ads, authentication, payment processors or AI services. Progress is saved only on the device.',
     '5. Regional differences: none. The app works the same in all regions.',
     `6. Regulated industry or third-party material: not applicable. ${fonts}`,
     '7. In-App Purchases: none.',
