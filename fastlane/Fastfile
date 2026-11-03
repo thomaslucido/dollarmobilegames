@@ -25,6 +25,19 @@ platform :ios do
       app_target.resources_build_phase.add_file_reference(ref)
       xproj.save
     end
+    # Local native plugins copied in by configure-ios.mjs (Game Center games): compile them into the App target.
+    app_dir = File.expand_path("../ios/App/App", __dir__)
+    %w[GameCenterPlugin.swift GameViewController.swift].each do |swift|
+      next unless File.exist?(File.join(app_dir, swift))
+      next if app_group.files.any? { |f| f.path == swift }
+      ref = app_group.new_reference(swift)
+      app_target.source_build_phase.add_file_reference(ref)
+      xproj.save
+    end
+    if File.exist?(File.join(app_dir, "App.entitlements")) && !app_group.files.any? { |f| f.path == "App.entitlements" }
+      app_group.new_reference("App.entitlements")
+      xproj.save
+    end
 
     increment_version_number(xcodeproj: project, version_number: ENV.fetch("APP_VERSION"))
     increment_build_number(xcodeproj: project, build_number: ENV.fetch("BUILD_NUMBER"))
@@ -69,7 +82,7 @@ platform :ios do
       skip_metadata: false,
       skip_screenshots: false,
       overwrite_screenshots: true,
-      submit_for_review: true,
+      submit_for_review: ENV.fetch("SUBMIT", "true") == "true",
       automatic_release: true,
       run_precheck_before_submit: false,
       precheck_include_in_app_purchases: false,
