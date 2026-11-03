@@ -80,7 +80,7 @@ platform :ios do
       app_version: ENV.fetch("APP_VERSION"),
       force: true,
       skip_metadata: false,
-      skip_screenshots: false,
+      skip_screenshots: ENV.fetch("SKIP_SCREENSHOTS", "false") == "true",
       overwrite_screenshots: true,
       submit_for_review: ENV.fetch("SUBMIT", "true") == "true",
       automatic_release: true,
