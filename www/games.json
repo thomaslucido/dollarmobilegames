@@ -70,5 +70,15 @@
     "added": "2026-11-02",
     "accent": "#ff48b0",
     "status": "built"
+  },
+  {
+    "slug": "simmerstone",
+    "name": "Simmerstone",
+    "tagline": "Warm the pools. Match the hats. Keep every monkey cozy.",
+    "genre": "cozy hot spring tending sim",
+    "bundleId": "com.thomaslucido.simmerstone",
+    "added": "2026-11-07",
+    "accent": "#8b7fd1",
+    "status": "built"
   }
 ]

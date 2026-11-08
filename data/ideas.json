@@ -58,5 +58,15 @@
     "slug": "sow-far",
     "status": "built",
     "why": "QA passed"
+  },
+  {
+    "date": "2026-11-07",
+    "trend": "cozy stress-relief tending sim",
+    "evidence": "Scout: stress-relief signals from Plarium and AppFollow; no verified US chart snapshots (data/trends empty), directional only",
+    "concept": "Snow monkeys in knitted hats soak in terraced hot spring pools; drop ember stones to hold each pool at the warmth its hat asks for, heat runs downhill",
+    "name": "Simmerstone",
+    "slug": "simmerstone",
+    "status": "built",
+    "why": "QA passed"
   }
 ]

@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9a90c8"/>
+      <stop offset="1" stop-color="#e8d6e6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- dusk sky and far felt mountains -->
+  <rect width="512" height="512" fill="url(#sky)"/>
+  <path d="M0 250L70 176L128 214L200 140L280 216L350 160L430 220L512 170V300H0Z" fill="#b9add6"/>
+  <path d="M200 140L228 168L214 172L200 160L186 172L172 168ZM350 160L374 182L350 178L330 186Z" fill="#efe9f5"/>
+
+  <!-- snowy ground -->
+  <path d="M0 268Q128 246 256 262T512 256V512H0Z" fill="#f7f4fa"/>
+  <path d="M0 470Q128 456 256 468T512 462V512H0Z" fill="#d6cde6"/>
+
+  <!-- rock rim of the pool, with felt stitching -->
+  <ellipse cx="256" cy="390" rx="220" ry="96" fill="#9b8f9a"/>
+  <ellipse cx="256" cy="390" rx="208" ry="86" fill="none" stroke="#7a6e7a" stroke-width="4" stroke-dasharray="11 9"/>
+
+  <!-- warm jade water -->
+  <ellipse cx="256" cy="390" rx="196" ry="76" fill="#86cfb4"/>
+
+  <!-- steam -->
+  <g fill="none" stroke="#fbf7ff" stroke-linecap="round" stroke-width="14" opacity=".8">
+    <path d="M104 330q-22-30 0-58q22-28 0-58"/>
+    <path d="M412 334q22-30 0-58q-22-28 0-58"/>
+  </g>
+
+  <!-- the bather: snow monkey in a knitted hat -->
+  <circle cx="162" cy="304" r="27" fill="#cdb9a3"/>
+  <circle cx="350" cy="304" r="27" fill="#cdb9a3"/>
+  <circle cx="162" cy="304" r="14" fill="#f0868f"/>
+  <circle cx="350" cy="304" r="14" fill="#f0868f"/>
+  <circle cx="256" cy="296" r="100" fill="#cdb9a3"/>
+  <circle cx="256" cy="296" r="90" fill="none" stroke="#a8927c" stroke-width="4" stroke-dasharray="9 8"/>
+  <circle cx="226" cy="294" r="37" fill="#f0868f"/>
+  <circle cx="286" cy="294" r="37" fill="#f0868f"/>
+  <ellipse cx="256" cy="322" rx="64" ry="50" fill="#f0868f"/>
+  <g fill="none" stroke="#4a3a48" stroke-width="8" stroke-linecap="round">
+    <path d="M210 302Q225 288 240 302"/>
+    <path d="M272 302Q287 288 302 302"/>
+  </g>
+  <circle cx="248" cy="328" r="4.5" fill="#b85466"/>
+  <circle cx="264" cy="328" r="4.5" fill="#b85466"/>
+  <circle cx="200" cy="330" r="10" fill="#f7a7ad"/>
+  <circle cx="312" cy="330" r="10" fill="#f7a7ad"/>
+
+  <!-- hat -->
+  <path d="M166 242Q170 150 256 146Q342 150 346 242Z" fill="#e5675a"/>
+  <g fill="none" stroke="#c9503f" stroke-width="4" stroke-dasharray="8 7">
+    <path d="M214 236Q212 190 226 160"/>
+    <path d="M256 236V150"/>
+    <path d="M298 236Q300 190 286 160"/>
+  </g>
+  <rect x="156" y="226" width="200" height="32" rx="16" fill="#c9503f"/>
+  <path d="M174 242H338" stroke="#f3a294" stroke-width="4" stroke-dasharray="7 7" stroke-linecap="round"/>
+  <circle cx="218" cy="148" r="19" fill="#fbf3e6"/>
+  <circle cx="256" cy="130" r="23" fill="#fbf3e6"/>
+  <circle cx="294" cy="148" r="19" fill="#fbf3e6"/>
+
+  <!-- water's front surface hides the chin; front lip of the rim -->
+  <path d="M61 382Q256 352 451 382A196 76 0 0 1 61 382Z" fill="#86cfb4"/>
+  <path d="M96 392Q256 372 416 392" fill="none" stroke="#a9e0cb" stroke-width="8" stroke-linecap="round"/>
+  <path d="M36 390A220 96 0 0 0 476 390L452 390A196 76 0 0 1 60 390Z" fill="#9b8f9a"/>
+  <path d="M48 396A208 86 0 0 0 464 396" fill="none" stroke="#7a6e7a" stroke-width="4" stroke-dasharray="11 9"/>
+
+  <!-- an ember stone on the rim -->
+  <ellipse cx="440" cy="330" rx="30" ry="21" fill="#e8624f"/>
+  <ellipse cx="432" cy="323" rx="11" ry="6" fill="#ffb08a"/>
+
+  <!-- felt snowflakes -->
+  <g fill="#fbf7ff">
+    <circle cx="60" cy="70" r="9"/><circle cx="150" cy="40" r="6"/><circle cx="420" cy="58" r="8"/>
+    <circle cx="474" cy="120" r="6"/><circle cx="40" cy="170" r="6"/><circle cx="360" cy="100" r="5"/>
+    <circle cx="96" cy="118" r="5"/>
+  </g>
+</svg>
