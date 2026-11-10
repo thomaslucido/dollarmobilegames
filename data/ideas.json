@@ -68,5 +68,15 @@
     "slug": "simmerstone",
     "status": "built",
     "why": "QA passed"
+  },
+  {
+    "date": "2026-11-09",
+    "trend": "light lane-placement strategy (tower-defence lite)",
+    "evidence": "Scout: no chart snapshots; strategy download growth signals mixed, directional only",
+    "concept": "Wind-up tin toys in a nursery; hold a lane to wind, release to shove rolling dust bunnies back from a napping cat; snug-wind timing, sweeps",
+    "name": "Tintrot",
+    "slug": "tintrot",
+    "status": "built",
+    "why": "QA passed"
   }
 ]

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff7a62"/>
+      <stop offset="0.22" stop-color="#e0362c"/>
+      <stop offset="0.78" stop-color="#e0362c"/>
+      <stop offset="1" stop-color="#a8231c"/>
+    </linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe07a"/>
+      <stop offset="0.45" stop-color="#f2b705"/>
+      <stop offset="1" stop-color="#b78300"/>
+    </linearGradient>
+  </defs>
+
+  <!-- walnut floorboards -->
+  <rect width="512" height="512" fill="#5a3826"/>
+  <rect x="128" width="128" height="512" fill="#4f3020"/>
+  <rect x="384" width="128" height="512" fill="#4f3020"/>
+  <g fill="none" stroke="#6b4530" stroke-width="5" stroke-linecap="round">
+    <path d="M40 30Q60 120 44 210"/>
+    <path d="M300 60Q318 150 296 250"/>
+    <path d="M190 330Q172 410 192 500"/>
+    <path d="M450 250Q470 320 452 380"/>
+  </g>
+  <g stroke="#2b1a12" stroke-width="6">
+    <path d="M128 0V512M256 0V512M384 0V512"/>
+  </g>
+
+  <!-- afternoon sunbeam -->
+  <path d="M120 0H330L512 250V470Z" fill="#ffe2a0" opacity=".12"/>
+
+  <g transform="translate(-16 0)">
+  <!-- floor shadow -->
+  <ellipse cx="250" cy="430" rx="170" ry="24" fill="#1c1410" opacity=".45"/>
+
+  <!-- wind-up key -->
+  <g stroke="#1c1410" stroke-width="8" stroke-linejoin="round">
+    <rect x="190" y="150" width="20" height="96" rx="6" fill="url(#brass)"/>
+    <ellipse cx="156" cy="138" rx="42" ry="30" fill="url(#brass)"/>
+    <ellipse cx="244" cy="138" rx="42" ry="30" fill="url(#brass)"/>
+    <circle cx="200" cy="142" r="18" fill="#f2b705"/>
+  </g>
+  <ellipse cx="152" cy="138" rx="16" ry="10" fill="#5a3826"/>
+  <ellipse cx="248" cy="138" rx="16" ry="10" fill="#5a3826"/>
+
+  <!-- tin duck -->
+  <g stroke="#1c1410" stroke-width="8" stroke-linejoin="round">
+    <!-- feet -->
+    <path d="M196 396H262L270 424H188Z" fill="url(#brass)"/>
+    <path d="M290 396H352L362 424H282Z" fill="url(#brass)"/>
+    <!-- tail -->
+    <path d="M150 262L70 208L118 318Z" fill="url(#tin)"/>
+    <!-- body -->
+    <path d="M118 300C118 252 160 230 214 234L300 240C352 244 388 270 394 314C400 366 354 402 272 404H196C142 402 112 368 118 300Z" fill="url(#tin)"/>
+    <!-- head -->
+    <circle cx="324" cy="196" r="66" fill="url(#tin)"/>
+    <!-- beak -->
+    <path d="M382 180L452 202L382 226Z" fill="url(#brass)"/>
+    <!-- wing -->
+    <path d="M168 300C200 266 274 264 304 300C282 342 214 348 168 322Z" fill="#f6ead2"/>
+  </g>
+  <!-- litho print details -->
+  <g fill="#f2b705">
+    <circle cx="208" cy="304" r="7"/><circle cx="240" cy="296" r="7"/><circle cx="270" cy="304" r="7"/>
+    <circle cx="226" cy="322" r="7"/><circle cx="256" cy="322" r="7"/>
+  </g>
+  <path d="M140 372C190 392 300 394 368 360" fill="none" stroke="#f6ead2" stroke-width="7" stroke-dasharray="2 14" stroke-linecap="round"/>
+  <circle cx="318" cy="222" r="11" fill="#ff7a62"/>
+  <circle cx="340" cy="182" r="13" fill="#1c1410"/>
+  <circle cx="345" cy="177" r="4.5" fill="#f6ead2"/>
+  <!-- tin shine -->
+  <path d="M290 152Q310 140 334 142" fill="none" stroke="#ffd0c4" stroke-width="8" stroke-linecap="round"/>
+  <path d="M150 268Q180 248 222 248" fill="none" stroke="#ffb3a3" stroke-width="7" stroke-linecap="round"/>
+
+  </g>
+
+  <!-- dust bunny, about to be shoved -->
+  <g transform="translate(-16 -12)">
+  <g fill="#9d968e">
+    <circle cx="452" cy="440" r="36"/>
+  </g>
+  <g fill="#c9c3bb">
+    <circle cx="450" cy="432" r="34"/>
+    <circle cx="418" cy="430" r="14"/><circle cx="424" cy="408" r="14"/><circle cx="442" cy="396" r="14"/>
+    <circle cx="466" cy="398" r="14"/><circle cx="482" cy="414" r="14"/><circle cx="486" cy="438" r="14"/>
+    <circle cx="478" cy="460" r="14"/><circle cx="456" cy="468" r="14"/><circle cx="432" cy="460" r="14"/>
+  </g>
+  <g fill="#e9e4dd">
+    <circle cx="436" cy="412" r="7"/><circle cx="458" cy="404" r="5"/>
+  </g>
+  <circle cx="436" cy="430" r="6" fill="#1c1410"/>
+  <circle cx="460" cy="430" r="6" fill="#1c1410"/>
+  <path d="M440 446Q448 452 456 446" fill="none" stroke="#1c1410" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

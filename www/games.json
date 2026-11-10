@@ -80,5 +80,15 @@
     "added": "2026-11-07",
     "accent": "#8b7fd1",
     "status": "built"
+  },
+  {
+    "slug": "tintrot",
+    "name": "Tintrot",
+    "tagline": "Wind the toys. Shove the fluff. Let the cat nap.",
+    "genre": "wind-up lane defense",
+    "bundleId": "com.thomaslucido.tintrot",
+    "added": "2026-11-09",
+    "accent": "#f2b705",
+    "status": "built"
   }
 ]
