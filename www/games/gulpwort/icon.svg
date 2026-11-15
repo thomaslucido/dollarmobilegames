@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <pattern id="dots" width="92" height="92" patternUnits="userSpaceOnUse">
+      <circle cx="23" cy="23" r="17" fill="#ffab88"/>
+      <circle cx="69" cy="69" r="17" fill="#ffab88"/>
+    </pattern>
+    <!-- plant silhouette: used for the hard shadow and the white die-cut border -->
+    <g id="plantShape">
+      <path d="M232 400 Q 222 448 238 520 L 282 520 Q 268 450 276 400 Z"/>
+      <path d="M150 300 Q 150 450 290 446 Q 430 440 446 340 Z"/>
+      <path d="M150 290 C 110 140 230 40 340 52 C 420 60 452 100 440 130 Z"/>
+      <path d="M146 296 L 440 130 L 446 340 Z"/>
+      <path d="M126 470 L 386 470 L 372 530 L 140 530 Z"/>
+    </g>
+    <g id="flyShape">
+      <ellipse cx="364" cy="214" rx="30" ry="19" transform="rotate(-40 364 214)"/>
+      <ellipse cx="404" cy="212" rx="30" ry="19" transform="rotate(40 404 212)"/>
+      <circle cx="384" cy="242" r="27"/>
+    </g>
+  </defs>
+
+  <!-- coral sticker page -->
+  <rect width="512" height="512" fill="#ff9b73"/>
+  <rect width="512" height="512" fill="url(#dots)"/>
+
+  <!-- hard shadow, then white die-cut border -->
+  <use xlink:href="#plantShape" href="#plantShape" fill="#de6a4c" transform="translate(10 10)"/>
+  <use xlink:href="#plantShape" href="#plantShape" fill="#fffaf0" stroke="#fffaf0" stroke-width="26" stroke-linejoin="round"/>
+
+  <!-- pot -->
+  <path d="M126 470 L 386 470 L 372 530 L 140 530 Z" fill="#fff1d6"/>
+  <rect x="124" y="470" width="264" height="24" rx="6" fill="#4a2457"/>
+  <circle cx="190" cy="512" r="7" fill="#a8d12a"/>
+  <circle cx="256" cy="512" r="7" fill="#a8d12a"/>
+  <circle cx="322" cy="512" r="7" fill="#a8d12a"/>
+
+  <!-- stem -->
+  <path d="M232 400 Q 222 440 236 470 L 278 470 Q 268 440 276 400 Z" fill="#2f6b2a"/>
+  <path d="M244 410 Q 238 440 246 466" fill="none" stroke="#4f8f36" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- deep mouth between the leaves -->
+  <path d="M146 296 L 440 130 L 446 340 Z" fill="#b51f3c"/>
+  <path d="M178 294 L 422 156 Q 444 240 430 326 Z" fill="#e8344e" opacity="0.5"/>
+
+  <!-- lower leaf -->
+  <path d="M150 300 Q 150 450 290 446 Q 430 440 446 340 Z" fill="#a8d12a"/>
+  <path d="M170 322 Q 190 428 292 428 Q 396 424 424 356 Z" fill="#7fa81a" opacity="0.45"/>
+  <path d="M150 300 L 446 340 Q 300 372 150 300 Z" fill="#e8344e"/>
+  <!-- lower teeth -->
+  <g stroke="#e3f5a0" stroke-width="10" stroke-linecap="round">
+    <path d="M209 308 L 212 282"/>
+    <path d="M248 313 L 252 287"/>
+    <path d="M286 318 L 290 292"/>
+    <path d="M325 324 L 328 298"/>
+    <path d="M363 329 L 366 303"/>
+    <path d="M402 334 L 406 308"/>
+  </g>
+
+  <!-- upper leaf -->
+  <path d="M150 290 C 110 140 230 40 340 52 C 420 60 452 100 440 130 Z" fill="#a8d12a"/>
+  <path d="M150 290 L 440 130 Q 320 196 150 290 Z" fill="#e8344e"/>
+  <!-- upper teeth -->
+  <g stroke="#e3f5a0" stroke-width="10" stroke-linecap="round">
+    <path d="M208 258 L 221 281"/>
+    <path d="M246 237 L 259 260"/>
+    <path d="M283 216 L 296 239"/>
+    <path d="M321 196 L 334 219"/>
+    <path d="M359 175 L 372 198"/>
+    <path d="M396 154 L 409 177"/>
+  </g>
+
+  <!-- eyes on the upper leaf, looking at the fly -->
+  <circle cx="226" cy="150" r="30" fill="#fffaf0"/>
+  <circle cx="304" cy="114" r="30" fill="#fffaf0"/>
+  <circle cx="240" cy="158" r="14" fill="#2a2530"/>
+  <circle cx="318" cy="122" r="14" fill="#2a2530"/>
+  <circle cx="235" cy="152" r="4.5" fill="#fffaf0"/>
+  <circle cx="313" cy="116" r="4.5" fill="#fffaf0"/>
+
+  <!-- gloss stroke on the sticker -->
+  <path d="M168 200 Q 176 140 222 98" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- the fly: its own little sticker inside the jaws -->
+  <use xlink:href="#flyShape" href="#flyShape" fill="#7a1428" transform="translate(6 6)" opacity="0.6"/>
+  <use xlink:href="#flyShape" href="#flyShape" fill="#fffaf0" stroke="#fffaf0" stroke-width="12" stroke-linejoin="round"/>
+  <ellipse cx="364" cy="214" rx="26" ry="15" transform="rotate(-40 364 214)" fill="#d6ecff"/>
+  <ellipse cx="404" cy="212" rx="26" ry="15" transform="rotate(40 404 212)" fill="#d6ecff"/>
+  <circle cx="384" cy="242" r="21" fill="#2a2530"/>
+  <circle cx="374" cy="250" r="8" fill="#e8344e"/>
+  <circle cx="392" cy="252" r="8" fill="#e8344e"/>
+</svg>

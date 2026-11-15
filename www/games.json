@@ -90,5 +90,15 @@
     "added": "2026-11-09",
     "accent": "#f2b705",
     "status": "built"
+  },
+  {
+    "slug": "gulpwort",
+    "name": "Gulpwort",
+    "tagline": "Snap the flies. Spare the bees. Keep all three fed.",
+    "genre": "flytrap snap arcade",
+    "bundleId": "com.thomaslucido.gulpwort",
+    "added": "2026-11-14",
+    "accent": "#a8d12a",
+    "status": "built"
   }
 ]

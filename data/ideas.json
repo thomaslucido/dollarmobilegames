@@ -78,5 +78,15 @@
     "slug": "tintrot",
     "status": "built",
     "why": "QA passed"
+  },
+  {
+    "date": "2026-11-14",
+    "trend": "arcade quick-score action",
+    "evidence": "AppMagic H1 2026: US arcade segment growing (directional; data/trends/ empty, scout used web search)",
+    "concept": "Three swaying potted flytraps on a sticker-sheet windowsill; tap a column to snap a jaw on passing bugs, keep all three bellies fed, never eat a bee; overfed plants bloom for x2 but draw bees.",
+    "name": "Gulpwort",
+    "slug": "gulpwort",
+    "status": "built",
+    "why": "QA PASS first round; validate and playtest clean; arcade is not in the last 6 genres."
   }
 ]
