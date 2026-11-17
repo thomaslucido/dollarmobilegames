@@ -100,5 +100,15 @@
     "added": "2026-11-14",
     "accent": "#a8d12a",
     "status": "built"
+  },
+  {
+    "slug": "glideleaf",
+    "name": "Glideleaf",
+    "tagline": "Spell a path up the falling leaves. Keep gliding.",
+    "genre": "falling-leaf word glide",
+    "bundleId": "com.thomaslucido.glideleaf",
+    "added": "2026-11-16",
+    "accent": "#e5481f",
+    "status": "built"
   }
 ]

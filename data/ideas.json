@@ -88,5 +88,15 @@
     "slug": "gulpwort",
     "status": "built",
     "why": "QA PASS first round; validate and playtest clean; arcade is not in the last 6 genres."
+  },
+  {
+    "date": "2026-11-16",
+    "trend": "word games",
+    "evidence": "Scout 2026-11-16 (low confidence, web search only; data/trends/ empty): a newspaper-backed multiplayer word game past 1M downloads; a calm word-puzzle title rising in US Android downloads in Q4 2025.",
+    "concept": "Letter leaves fall through an autumn birch wood; drag a word through leaves within gliding reach and a flying squirrel glides along it to its last letter. Words must climb to beat the fall; chaining from the landing leaf multiplies points; gold, wet, brittle and acorn leaves; three landings in the leaf pile end the run.",
+    "name": "Glideleaf",
+    "slug": "glideleaf",
+    "status": "built",
+    "why": "QA PASS first round; validate, playtest and store shots clean; first word game, not in the last 6 genres. Builder eased the design difficulty curve so human runs reach 3+ minutes; orchestrator removed 6 borderline slurs from the word list after QA."
   }
 ]
