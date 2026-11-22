@@ -98,5 +98,15 @@
     "slug": "glideleaf",
     "status": "built",
     "why": "QA PASS first round; validate, playtest and store shots clean; first word game, not in the last 6 genres. Builder eased the design difficulty curve so human runs reach 3+ minutes; orchestrator removed 6 borderline slurs from the word list after QA."
+  },
+  {
+    "date": "2026-11-21",
+    "trend": "hybrid-casual route-or-place puzzle",
+    "evidence": "AppMagic and Sensor Tower H1 2026 name hybrid-casual as the main casual growth story; puzzle is about 44% of casual revenue (PocketGamer.biz). No chart snapshots in data/trends this week, so the evidence is directional.",
+    "concept": "A spark is always burning along a fuse you draw in chalk. Fuse length is time: wiggle to wait, draw straight to hurry, and land the spark on each rocket just as its cue ring closes.",
+    "name": "Wickwalk",
+    "slug": "wickwalk",
+    "status": "built",
+    "why": "Freehand route-drawing timing verb, unlike our merge, sort, arrow and block puzzles; chalk-on-slate look is new for the studio. QA passed after one fix round."
   }
 ]

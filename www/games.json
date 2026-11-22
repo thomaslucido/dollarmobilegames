@@ -110,5 +110,15 @@
     "added": "2026-11-16",
     "accent": "#e5481f",
     "status": "built"
+  },
+  {
+    "slug": "wickwalk",
+    "name": "Wickwalk",
+    "tagline": "Draw the fuse. Wiggle to wait. Light every rocket on cue.",
+    "genre": "fuse-route timing puzzle",
+    "bundleId": "com.thomaslucido.wickwalk",
+    "added": "2026-11-21",
+    "accent": "#66e0b4",
+    "status": "built"
   }
 ]

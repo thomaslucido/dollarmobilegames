@@ -1,0 +1,1547 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Wickwalk</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#1f2e29;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;font-family:"Chalkboard SE","Marker Felt","Comic Sans MS",cursive}
+  canvas{display:block}
+  #probe{position:fixed;left:0;top:0;width:0;height:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="probe"></div>
+<script src="../../shared/game-kit.js"></script>
+<script>
+(function () {
+  'use strict';
+  const kit = GameKit.init({ slug: 'wickwalk', backColor: '#f2efe4' });
+  const TAU = Math.PI * 2;
+
+  // ---------- palette (DESIGN.md) ----------
+  const COL = {
+    slate: '#1f2e29', smudge: '#2a3b35', ghost: '#33463f', chalk: '#f2efe4', dust: '#c9cfc6', mint: '#66e0b4',
+    cord: '#e9dcc0', cordTick: '#b8a98a', damp: '#8cc8ef', ash: '#6f7a74', core: '#fff6c8', sp1: '#ffc95a', sp2: '#ff9c4a',
+    gold: '#f7df6e', coral: '#f07a6a', sky: '#8cc8ef', lilac: '#c3a6ef', peach: '#f8b48a', pink: '#f5a3c0',
+    wood: '#6b4a2f', woodEdge: '#8a6440', tray: '#5a3d26', card: '#2c3d37'
+  };
+  const ROCKET_COLS = ['#f5a3c0', '#f7df6e', '#8cc8ef', '#c3a6ef', '#f8b48a', '#66e0b4'];
+  const STICK_COLS = ['#f2efe4', '#f5a3c0', '#f7df6e'];
+  const FONT_BIG = '"Chalkduster","Chalkboard SE","Marker Felt","Comic Sans MS","Segoe Print","Bradley Hand","DejaVu Sans",sans-serif';
+  const FONT_UI = '"Chalkboard SE","Marker Felt","Chalkduster","Comic Sans MS","Segoe Print","DejaVu Sans",sans-serif';
+
+  // ---------- rules (all distances in U = field width) ----------
+  const STEP = 0.012, SPOOL = 2.6, END_GRAB = 0.06, CUT_GRAB = 0.05, CUT_AHEAD = 0.08;
+  const MARGIN = 0.03, OBS_GAP = 0.02, SELF_GAP = 0.035, SELF_IGNORE = 0.06;
+  const vAt = (t) => Math.min(0.24, 0.13 + 0.0005 * t);
+  const cueAt = (t) => Math.max(5.0, 10 - 0.022 * t);
+  const gapAt = (t) => Math.max(1.7, 5.0 - 0.014 * t);
+  const Fv = (t) => t < 220 ? 0.13 * t + 0.00025 * t * t : (0.13 * 220 + 0.00025 * 220 * 220) + 0.24 * (t - 220);
+  const vInt = (a, b) => (b > a ? Fv(b) - Fv(a) : 0);
+  const multOf = (st) => Math.min(4, 1 + 0.25 * st);
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const fmt = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const fmtMult = (m) => 'x' + (Math.round(m * 100) / 100).toString();
+  const easeOutBack = (x) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+  const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+  function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  // ---------- canvases ----------
+  const cv = document.getElementById('c');
+  const probe = document.getElementById('probe');
+  const layer = document.createElement('canvas'), lx = layer.getContext('2d');
+  const bg = document.createElement('canvas'), bx = bg.getContext('2d');
+  const tmp = document.createElement('canvas'), tx = tmp.getContext('2d');
+  let W = 390, H = 844, DPR = 1, U = 359, FX = 16, FY = 101, FH = 1.6, K = 1, safeT = 0, safeB = 0, trayY = 760, trayH = 42, FW = 10;
+  let patL = null, patT = null;
+
+  // grain tile: random specks, used with destination-out so every stroke looks powdery
+  const grain = document.createElement('canvas');
+  grain.width = grain.height = 256;
+  (function () {
+    const g = grain.getContext('2d'), id = g.createImageData(256, 256), d = id.data;
+    for (let i = 0; i < 256 * 256; i++) {
+      const r = Math.random();
+      d[i * 4 + 3] = r < 0.38 ? 150 + Math.random() * 105 : (r < 0.62 ? Math.random() * 110 : 0);
+    }
+    g.putImageData(id, 0, 0);
+    g.strokeStyle = 'rgba(0,0,0,0.55)'; g.lineWidth = 1;
+    for (let i = 0; i < 70; i++) { const x = Math.random() * 256, y = Math.random() * 256, l = 4 + Math.random() * 14, a = (Math.random() - 0.5) * 0.6; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
+  })();
+  function knock(g, pat, a) {
+    g.save(); g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'destination-out'; g.globalAlpha = a; g.fillStyle = pat;
+    try { const s = Math.max(1, DPR * 0.55); if (pat.setTransform && window.DOMMatrix) pat.setTransform(new DOMMatrix([s, 0, 0, s, 0, 0])); } catch (e) {}
+    g.fillRect(0, 0, g.canvas.width, g.canvas.height);
+    g.restore();
+  }
+
+  const X = (u) => FX + u * U, Y = (v) => FY + v * U;
+
+  // ---------- state ----------
+  const S = {
+    mode: 'title', t: 0, real: 0, titleT: 0, overT: 0, score: 0, lives: 3, streak: 0, best: kit.best(), lit: 0, perfects: 0, longest: 0,
+    nextSpawn: 2, lastCue: 0, first: true, nextCloud: 150, shake: 0, newBest: false, smoulder: 0, stuck: false, drew: false,
+    tEnd: 0, spoolFlash: 0, endPulse: 0, blockX: null, scoreBump: 0, multBump: 0, warp: false, seed: 1, crackT: 0, sputT: 0, scratch: 0,
+    ambT: 0, tutorial: !kit.get('seen', false), titleBurst: -1
+  };
+  let fuse = [], sparkS = 0, sparkI = 0;
+  let rockets = [], obstacles = [], clouds = [], parts = [], streaks = [], tips = [], pops = [], erased = [];
+  let sticks = [true, true, true], stickFx = [0, 0, 0];
+  let drag = null;
+  const AP = { on: false, q: [], qi: 0, target: null, check: 0, acc: 0, fingerA: 0, fx: 0, fy: 0, onAt: 0, warp2: false };
+  let rid = 1, lastCol = '';
+  const DBG = { log: [], fail: 0, idle: 0, cut: 0, clash: 0, block: 0 };
+
+  // ---------- layout ----------
+  function layout(s) {
+    W = s.w; H = s.h; DPR = s.dpr;
+    const cs = getComputedStyle(probe);
+    safeT = parseFloat(cs.paddingTop) || 0; safeB = parseFloat(cs.paddingBottom) || 0;
+    U = 0.92 * W; FX = 0.04 * W; K = U / 360;
+    FY = Math.max(0.12 * H, safeT + 64);
+    trayH = Math.max(30, 0.05 * H);
+    const fb = Math.min(0.90 * H, H - safeB - trayH - 6);
+    FH = (fb - FY) / U; trayY = fb + 2;
+    FW = Math.max(9, 0.026 * W);
+    for (const c of [layer, bg, tmp]) { c.width = cv.width; c.height = cv.height; }
+    lx.setTransform(DPR, 0, 0, DPR, 0, 0); tx.setTransform(DPR, 0, 0, DPR, 0, 0); bx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    patL = lx.createPattern(grain, 'repeat'); patT = tx.createPattern(grain, 'repeat');
+    bake();
+  }
+
+  // ---------- chalk drawing helpers ----------
+  function wcirc(g, cx, cy, r, seed, start, sweep, steps) {
+    start = start || 0; sweep = sweep === undefined ? TAU : sweep; steps = steps || Math.max(10, Math.ceil(Math.abs(sweep) / TAU * 30));
+    for (let i = 0; i <= steps; i++) {
+      const a = start + sweep * i / steps;
+      const rr = r * (1 + 0.035 * Math.sin(a * 3 + seed) + 0.02 * Math.sin(a * 7 + seed * 2.3));
+      const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+      if (i) g.lineTo(x, y); else g.moveTo(x, y);
+    }
+  }
+  function chalk(g, build, color, width, alpha) {
+    alpha = alpha === undefined ? 1 : alpha;
+    g.strokeStyle = color; g.lineWidth = width; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.globalAlpha = alpha; g.beginPath(); build(g); g.stroke();
+    g.globalAlpha = alpha * 0.4; g.translate(1, 1); g.beginPath(); build(g); g.stroke(); g.translate(-1, -1);
+    g.globalAlpha = 1;
+  }
+  function star4(g, x, y, r) {
+    g.moveTo(x, y - r); g.quadraticCurveTo(x, y, x + r, y); g.quadraticCurveTo(x, y, x, y + r);
+    g.quadraticCurveTo(x, y, x - r, y); g.quadraticCurveTo(x, y, x, y - r); g.closePath();
+  }
+  // big chalk lettering: each glyph a touch rotated and nudged, like it was written by hand
+  function jtext(g, txt, x, y, size, color, font, alpha, maxW) {
+    g.font = Math.round(size) + 'px ' + (font || FONT_BIG); g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillStyle = color;
+    let w = g.measureText(txt).width;
+    if (maxW && w > maxW) { size *= maxW / w; g.font = Math.round(size) + 'px ' + (font || FONT_BIG); w = g.measureText(txt).width; }
+    let cx = x - w / 2;
+    const a0 = alpha === undefined ? 1 : alpha;
+    for (let i = 0; i < txt.length; i++) {
+      const ch = txt[i], cw = g.measureText(ch).width, sd = Math.sin((i + 1) * 12.9898 + txt.length * 4.1) * 43758.5453, r = sd - Math.floor(sd);
+      g.save(); g.translate(cx + cw / 2, y + (r - 0.5) * size * 0.06); g.rotate((r - 0.5) * 0.09);
+      g.globalAlpha = a0; g.fillText(ch, -cw / 2, 0); g.globalAlpha = a0 * 0.3; g.fillText(ch, -cw / 2 + 0.8, 0.8);
+      g.restore(); cx += cw;
+    }
+    g.globalAlpha = 1;
+  }
+  function ctext(g, txt, x, y, size, color, font, alpha, align) {
+    g.font = Math.round(size) + 'px ' + (font || FONT_UI);
+    g.textAlign = align || 'center'; g.textBaseline = 'middle'; g.fillStyle = color;
+    g.globalAlpha = (alpha === undefined ? 1 : alpha); g.fillText(txt, x, y);
+    g.globalAlpha *= 0.3; g.fillText(txt, x + 0.8, y + 0.8); g.globalAlpha = 1;
+  }
+
+  // ---------- obstacles ----------
+  const RB = { puddle: 0.11, blanket: 0.128, tree: 0.08, bandstand: 0.11 };
+  function makeObstacles() {
+    const types = ['puddle', 'blanket', 'tree', 'bandstand'].sort(() => Math.random() - 0.5).slice(0, 3);
+    const out = [], lan = { x: 0.5, y: FH - 0.06 };
+    for (const ty of types) {
+      const rb = RB[ty];
+      for (let k = 0; k < 500; k++) {
+        const gap = k < 300 ? 0.22 : 0.12;
+        const x = 0.05 + rb + Math.random() * (0.9 - 2 * rb), y = 0.05 + rb + Math.random() * (FH - 0.1 - 2 * rb);
+        if (Math.hypot(x - lan.x, y - lan.y) < 0.3 + rb) continue;
+        if (S.tutorial && y - rb < 0.14) continue;
+        if (Math.abs(x - 0.5) < rb + 0.08 && y > FH - 0.5 - rb) continue;
+        if (out.some((o) => Math.hypot(o.x - x, o.y - y) - o.rb - rb < gap)) continue;
+        out.push({ ty, x, y, rb, rot: ty === 'blanket' ? Math.random() * Math.PI / 6 : (ty === 'puddle' ? (Math.random() - 0.5) * 0.7 : 0), seed: Math.random() * 100 });
+        break;
+      }
+    }
+    return out;
+  }
+  function sdObs(o, x, y) {
+    let dx = x - o.x, dy = y - o.y;
+    if (o.rot) { const c = Math.cos(-o.rot), s = Math.sin(-o.rot); const nx = dx * c - dy * s, ny = dx * s + dy * c; dx = nx; dy = ny; }
+    if (o.ty === 'tree') return Math.hypot(dx, dy) - 0.08;
+    if (o.ty === 'blanket') { const qx = Math.abs(dx) - 0.09, qy = Math.abs(dy) - 0.09; return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0); }
+    if (o.ty === 'puddle') { const a = 0.11, b = 0.07; const k0 = Math.hypot(dx / a, dy / b), k1 = Math.hypot(dx / (a * a), dy / (b * b)); return k0 < 1e-9 ? -b : k0 * (k0 - 1) / k1; }
+    const ap = 0.11 * Math.cos(Math.PI / 8); let m = -1e9;
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + Math.PI / 8; const d = dx * Math.cos(a) + dy * Math.sin(a) - ap; if (d > m) m = d; }
+    return m;
+  }
+  function obsDist(x, y) { let m = 9; for (const o of obstacles) { const d = sdObs(o, x, y); if (d < m) m = d; } return m; }
+
+  function drawObstacle(g, o) {
+    const cx = X(o.x), cy = Y(o.y), r = rng((o.seed * 1000) | 0);
+    g.save(); g.translate(cx, cy); g.rotate(o.rot);
+    if (o.ty === 'puddle') {
+      const a = 0.11 * U, b = 0.07 * U;
+      g.save(); g.beginPath(); g.ellipse(0, 0, a, b, 0, 0, TAU); g.clip();
+      g.strokeStyle = COL.sky; g.globalAlpha = 0.6; g.lineWidth = 1.6 * K; g.lineCap = 'round'; g.beginPath();
+      for (let x = -a - b; x < a + b; x += 5 * K) { g.moveTo(x + (r() - 0.5) * 2, -b - 2); g.lineTo(x + b * 0.9 + (r() - 0.5) * 3, b + 2); }
+      g.stroke(); g.restore();
+      chalk(g, (h) => { for (let i = 0; i <= 40; i++) { const t = i / 40 * TAU + 0.2; const k = 1 + 0.04 * Math.sin(t * 3 + o.seed); const x = Math.cos(t) * a * k, y = Math.sin(t) * b * k; i ? h.lineTo(x, y) : h.moveTo(x, y); } }, COL.sky, 2.2 * K, 0.9);
+      chalk(g, (h) => { h.ellipse(a * 0.2, -b * 0.05, a * 0.42, b * 0.42, 0, Math.PI * 0.95, Math.PI * 1.75); }, COL.chalk, 1.4 * K, 0.55);
+      chalk(g, (h) => { h.ellipse(a * 0.2, -b * 0.05, a * 0.22, b * 0.22, 0, Math.PI * 1.05, Math.PI * 1.85); }, COL.chalk, 1.3 * K, 0.5);
+    } else if (o.ty === 'blanket') {
+      const s = 0.09 * U, n = 4, c = 2 * s / n;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+        const x0 = -s + i * c, y0 = -s + j * c, col = (i + j) % 2 ? COL.lilac : COL.peach;
+        g.strokeStyle = col; g.globalAlpha = 0.55; g.lineWidth = 1.5 * K; g.lineCap = 'round'; g.beginPath();
+        for (let k = 0; k < 7; k++) { const t = (k + 0.5) / 7; g.moveTo(x0 + 1.5, y0 + t * c + (r() - 0.5)); g.lineTo(x0 + c - 1.5, y0 + t * c - c * 0.15 + (r() - 0.5)); }
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+      chalk(g, (h) => { h.moveTo(-s, -s); h.lineTo(s + 1, -s + 1); h.lineTo(s, s); h.lineTo(-s - 1, s - 1); h.closePath(); }, COL.lilac, 2.2 * K, 0.95);
+      chalk(g, (h) => { for (let k = 0; k < 8; k++) { const x = -s + (k + 0.5) * s / 4; h.moveTo(x, s + 1); h.lineTo(x + (r() - 0.5) * 2, s + 5 * K); h.moveTo(x, -s - 1); h.lineTo(x + (r() - 0.5) * 2, -s - 5 * K); } }, COL.peach, 1.4 * K, 0.8);
+    } else if (o.ty === 'tree') {
+      const R = 0.08 * U;
+      g.fillStyle = COL.mint; g.globalAlpha = 0.12; g.beginPath(); g.arc(0, 0, R, 0, TAU); g.fill(); g.globalAlpha = 1;
+      chalk(g, (h) => {
+        for (let k = 0; k < 13; k++) { const a = k / 13 * TAU + r() * 0.2, rr = R * 0.78, lr = R * (0.2 + r() * 0.07); const x = Math.cos(a) * rr, y = Math.sin(a) * rr; h.moveTo(x + lr, y); h.arc(x, y, lr, 0, TAU * 0.9); }
+        for (let k = 0; k < 6; k++) { const a = r() * TAU, rr = r() * R * 0.45, lr = R * (0.14 + r() * 0.08); const x = Math.cos(a) * rr, y = Math.sin(a) * rr; h.moveTo(x + lr, y); h.arc(x, y, lr, 0, TAU * 0.85); }
+      }, COL.mint, 1.8 * K, 0.85);
+      g.fillStyle = COL.cordTick; g.beginPath(); g.arc(0, 0, 3.2 * K, 0, TAU); g.fill();
+    } else {
+      const R = 0.11 * U, Ri = 0.07 * U;
+      const oct = (h, rad) => { for (let i = 0; i <= 8; i++) { const a = i * Math.PI / 4; const x = Math.cos(a) * rad, y = Math.sin(a) * rad; i ? h.lineTo(x, y) : h.moveTo(x, y); } };
+      g.fillStyle = COL.chalk; g.globalAlpha = 0.07; g.beginPath(); oct(g, R); g.fill(); g.globalAlpha = 1;
+      chalk(g, (h) => oct(h, R), COL.chalk, 2.2 * K, 0.92);
+      chalk(g, (h) => oct(h, Ri), COL.chalk, 1.5 * K, 0.6);
+      chalk(g, (h) => { for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; h.moveTo(Math.cos(a) * Ri, Math.sin(a) * Ri); h.lineTo(Math.cos(a) * R, Math.sin(a) * R); } }, COL.chalk, 1.2 * K, 0.5);
+      chalk(g, (h) => { h.moveTo(0, 0); h.lineTo(0, -R * 0.75); }, COL.chalk, 1.6 * K, 0.95);
+      g.fillStyle = COL.pink; g.globalAlpha = 0.85; g.beginPath(); g.moveTo(0, -R * 0.75); g.lineTo(R * 0.38, -R * 0.62); g.lineTo(0, -R * 0.5); g.closePath(); g.fill(); g.globalAlpha = 1;
+      g.fillStyle = COL.chalk; g.beginPath(); g.arc(0, 0, 2.5 * K, 0, TAU); g.fill();
+    }
+    g.restore();
+  }
+
+  // ---------- baked board: slate, smudges, ghost scribbles, obstacles, wooden frame ----------
+  function bake() {
+    const g = bx; const r = rng(S.seed);
+    g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+    g.fillStyle = COL.slate; g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 11; i++) {
+      const x = r() * W, y = r() * H, rad = (0.18 + r() * 0.35) * W;
+      const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+      gr.addColorStop(0, 'rgba(42,59,53,0.5)'); gr.addColorStop(1, 'rgba(42,59,53,0)');
+      g.fillStyle = gr; g.fillRect(x - rad, y - rad, 2 * rad, 2 * rad);
+    }
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    for (let i = 0; i < 7; i++) {
+      g.strokeStyle = 'rgba(42,59,53,0.32)'; g.lineWidth = (14 + r() * 24) * K; g.beginPath();
+      let x = r() * W, y = r() * H; g.moveTo(x, y);
+      for (let j = 0; j < 4; j++) { x += (r() - 0.5) * W * 0.5; y += (r() - 0.5) * H * 0.1; g.lineTo(x, y); }
+      g.stroke();
+    }
+    // ghosts of old lessons, half wiped away
+    tx.clearRect(0, 0, W, H);
+    const words = ['3 + 4 = 7', 'fair  sat', 'abc', '12 x 3', 'spell: lantern', 'x = 2', '9 - 5', 'bring a jumper', 'Tuesday', '1 2 3 4', 'cats', '7 x 8 = 56'];
+    for (let i = 0; i < 7; i++) {
+      tx.save(); tx.translate(r() * W, FY + r() * (trayY - FY)); tx.rotate((r() - 0.5) * 0.35);
+      tx.font = Math.round((15 + r() * 18) * K) + 'px ' + FONT_BIG; tx.fillStyle = COL.ghost; tx.globalAlpha = 0.5;
+      tx.textAlign = 'center'; tx.textBaseline = 'middle'; tx.fillText(words.splice((r() * words.length) | 0, 1)[0], 0, 0); tx.restore();
+    }
+    tx.strokeStyle = COL.ghost; tx.lineCap = 'round'; tx.globalAlpha = 0.6;
+    for (let i = 0; i < 5; i++) {
+      const x = r() * W, y = FY + r() * (trayY - FY), kind = (r() * 4) | 0, s = (20 + r() * 26) * K;
+      tx.lineWidth = 2 * K; tx.beginPath();
+      if (kind === 0) { for (let k = 1; k < 3; k++) { tx.moveTo(x + k * s / 3, y); tx.lineTo(x + k * s / 3, y + s); tx.moveTo(x, y + k * s / 3); tx.lineTo(x + s, y + k * s / 3); } }
+      else if (kind === 1) { for (let k = 0; k < 5; k++) { tx.moveTo(x + k * 6 * K, y); tx.lineTo(x + k * 6 * K + (k === 4 ? -28 * K : 0), y + s * 0.6); } }
+      else if (kind === 2) { tx.moveTo(x, y); tx.lineTo(x + s * 1.4, y + s * 0.3); tx.lineTo(x + s * 1.1, y); tx.moveTo(x + s * 1.4, y + s * 0.3); tx.lineTo(x + s * 1.05, y + s * 0.55); }
+      else { for (let k = 0; k <= 30; k++) { const t = k / 30; const px = x + t * s * 2.2, py = y + Math.sin(t * 14) * s * 0.18 - Math.cos(t * 7) * s * 0.1; k ? tx.lineTo(px, py) : tx.moveTo(px, py); } }
+      tx.stroke();
+    }
+    tx.globalAlpha = 1;
+    knock(tx, patT, 0.55);
+    g.drawImage(tmp, 0, 0, W, H);
+    if (obstacles.length) {
+      tx.clearRect(0, 0, W, H);
+      for (const o of obstacles) drawObstacle(tx, o);
+      knock(tx, patT, 0.35);
+      g.drawImage(tmp, 0, 0, W, H);
+    }
+    drawFrame(g, r);
+  }
+  function drawFrame(g, r) {
+    const f = FW;
+    // ledge shadow on the slate
+    const sh = g.createLinearGradient(0, trayY - 10, 0, trayY);
+    sh.addColorStop(0, 'rgba(0,0,0,0)'); sh.addColorStop(1, 'rgba(0,0,0,0.35)');
+    g.fillStyle = sh; g.fillRect(0, trayY - 10, W, 10);
+    g.fillStyle = COL.wood;
+    g.fillRect(0, 0, W, f); g.fillRect(0, 0, f, H); g.fillRect(W - f, 0, f, H);
+    g.fillRect(0, trayY + trayH, W, H - trayY - trayH);
+    // tray (ledge where the chalk lies)
+    g.fillStyle = COL.tray; g.fillRect(0, trayY, W, trayH);
+    g.fillStyle = 'rgba(0,0,0,0.28)'; g.fillRect(f, trayY + 2, W - 2 * f, trayH * 0.62);
+    g.fillStyle = COL.woodEdge; g.fillRect(0, trayY + trayH * 0.7, W, Math.max(2, trayH * 0.1));
+    g.fillStyle = 'rgba(255,240,210,0.12)'; g.fillRect(0, trayY, W, 1.5);
+    // wood grain
+    g.strokeStyle = 'rgba(40,24,12,0.35)'; g.lineWidth = 1;
+    const grainLine = (x0, y0, x1, y1) => { g.beginPath(); g.moveTo(x0, y0); g.quadraticCurveTo((x0 + x1) / 2 + (r() - 0.5) * 6, (y0 + y1) / 2 + (r() - 0.5) * 6, x1, y1); g.stroke(); };
+    for (let i = 0; i < 4; i++) { const y = f * (0.2 + i * 0.2); grainLine(0, y, W, y + (r() - 0.5) * 2); }
+    for (let i = 0; i < 4; i++) { const x = f * (0.2 + i * 0.2); grainLine(x, 0, x + (r() - 0.5) * 2, H); grainLine(W - x, 0, W - x + (r() - 0.5) * 2, H); }
+    for (let i = 0; i < 6; i++) { const y = trayY + trayH + 3 + i * 5; if (y < H) grainLine(0, y, W, y + (r() - 0.5) * 3); }
+    // inner edge
+    g.strokeStyle = COL.woodEdge; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(f, trayY); g.lineTo(f, f); g.lineTo(W - f, f); g.lineTo(W - f, trayY); g.stroke();
+    g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(f + 1.5, trayY); g.lineTo(f + 1.5, f + 1.5); g.lineTo(W - f - 1.5, f + 1.5); g.lineTo(W - f - 1.5, trayY); g.stroke();
+    // mitred corners
+    g.strokeStyle = 'rgba(30,18,8,0.5)'; g.beginPath(); g.moveTo(0, 0); g.lineTo(f, f); g.moveTo(W, 0); g.lineTo(W - f, f); g.stroke();
+  }
+
+  // ---------- fuse ----------
+  function endPt() { return fuse[fuse.length - 1]; }
+  function endS() { return fuse[fuse.length - 1].s; }
+  function addPt(x, y) {
+    const e = endPt(), d = Math.hypot(x - e.x, y - e.y);
+    if (d < 1e-7) return;
+    fuse.push({ x, y, s: e.s + d, bt: -1, dm: 0 });
+    S.scratch += d;
+    if (S.scratch >= 0.04) { S.scratch = 0; sfxScratch(); }
+  }
+  function sparkPos() {
+    const a = fuse[sparkI], b = fuse[sparkI + 1];
+    if (!b) return { x: a.x, y: a.y };
+    const L = b.s - a.s, f = L > 0 ? (sparkS - a.s) / L : 0;
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+  }
+  function resetFuse() {
+    const x0 = 0.5, y0 = FH - 0.06;
+    fuse = [{ x: x0, y: y0, s: 0, bt: 0, dm: 0 }];
+    const n = Math.round(0.35 / STEP);
+    for (let k = 1; k <= n; k++) fuse.push({ x: x0, y: y0 - k * STEP, s: k * STEP, bt: -1, dm: 0 });
+    sparkS = 0; sparkI = 0;
+  }
+  function canStep(x, y) {
+    if (x < MARGIN || x > 1 - MARGIN || y < MARGIN || y > FH - MARGIN) return 1;
+    if (obsDist(x, y) < OBS_GAP) return 1;
+    const es = endS();
+    if (es + STEP - sparkS > SPOOL) return 2;
+    const lim = es - SELF_IGNORE, r2 = SELF_GAP * SELF_GAP;
+    if (sparkS <= lim) { const sp = sparkPos(); if ((sp.x - x) * (sp.x - x) + (sp.y - y) * (sp.y - y) < r2) return 1; }
+    for (let i = sparkI + 1; i < fuse.length; i++) {
+      const p = fuse[i]; if (p.s > lim) break;
+      if ((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) < r2) return 1;
+    }
+    return 0;
+  }
+  // grow the fuse end toward the finger in STEP increments
+  function drawToward(fx, fy) {
+    let e = endPt(), dx = fx - e.x, dy = fy - e.y, d = Math.hypot(dx, dy);
+    if (drag.blocked) {
+      if (d <= END_GRAB) drag.blocked = false;
+      else { S.blockX = { x: fx, y: fy, t: S.real }; return; }
+    }
+    let guard = 0;
+    while (d >= STEP && guard++ < 300) {
+      const nx = e.x + dx / d * STEP, ny = e.y + dy / d * STEP;
+      const c = canStep(nx, ny);
+      if (c === 2) { S.spoolFlash = 0.7; break; }
+      if (c === 1) { drag.blocked = true; S.blockX = { x: fx, y: fy, t: S.real }; break; }
+      addPt(nx, ny);
+      e = endPt(); dx = fx - e.x; dy = fy - e.y; d = Math.hypot(dx, dy);
+    }
+  }
+  function cutAt(s) {
+    let i = sparkI + 1;
+    while (i < fuse.length && fuse[i].s < s) i++;
+    if (i >= fuse.length) return;
+    const a = fuse[i - 1], b = fuse[i], L = b.s - a.s, f = L > 0 ? (s - a.s) / L : 0;
+    const p = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, s, bt: -1, dm: Math.max(a.dm, b.dm) };
+    const gone = [p].concat(fuse.slice(i));
+    fuse.length = i; fuse.push(p);
+    if (!S.warp && gone.length > 1) { erased.push({ pts: gone.map((q) => ({ x: q.x, y: q.y })), t: 0 }); sfxErase(); }
+  }
+  function nearestCut(x, y) {
+    let best = null, bd = CUT_GRAB;
+    for (let i = sparkI + 1; i < fuse.length; i++) {
+      const a = i === sparkI + 1 ? Object.assign({ s: sparkS }, sparkPos()) : fuse[i - 1], b = fuse[i];
+      const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+      let f = L2 > 0 ? ((x - a.x) * dx + (y - a.y) * dy) / L2 : 0; f = clamp(f, 0, 1);
+      const px = a.x + dx * f, py = a.y + dy * f, d = Math.hypot(x - px, y - py), s = a.s + (b.s - a.s) * f;
+      if (d < bd && s >= sparkS + CUT_AHEAD) { bd = d; best = s; }
+    }
+    return best;
+  }
+
+  // ---------- burning ----------
+  function burn(dt) {
+    let left = dt, guard = 0;
+    const v = vAt(S.t);
+    while (left > 1e-7 && guard++ < 500) {
+      if (sparkI >= fuse.length - 1) return true;
+      const a = fuse[sparkI], b = fuse[sparkI + 1];
+      const sp = v * ((a.dm > S.t || b.dm > S.t) ? 0.6 : 1);
+      const ds = Math.min(left * sp, b.s - sparkS, 0.004);
+      sparkS += ds; left -= ds / sp;
+      if (b.s - sparkS <= 1e-9) { sparkS = b.s; sparkI++; b.bt = S.t; }
+      lightCheck();
+      if (S.mode !== 'play') return false;
+    }
+    return sparkI >= fuse.length - 1;
+  }
+  function lightCheck() {
+    const p = sparkPos();
+    for (const r of rockets) if (r.st === 'wait' && (p.x - r.x) * (p.x - r.x) + (p.y - r.y) * (p.y - r.y) <= r.lr * r.lr) light(r);
+  }
+  function segCircle(ax, ay, bx2, by2, cx, cy, r) {
+    const dx = bx2 - ax, dy = by2 - ay, fx = ax - cx, fy = ay - cy;
+    const c = fx * fx + fy * fy - r * r; if (c <= 0) return 0;
+    const a = dx * dx + dy * dy; if (a < 1e-12) return -1;
+    const b = 2 * (fx * dx + fy * dy), disc = b * b - 4 * a * c; if (disc < 0) return -1;
+    const t = (-b - Math.sqrt(disc)) / (2 * a);
+    return t >= 0 && t <= 1 ? t : -1;
+  }
+  // arrival tick: when will the spark first come within light range of each rocket?
+  function predict() {
+    const pend = [];
+    for (const r of rockets) if (r.st === 'wait') { r.tick = null; r.hitS = null; pend.push(r); }
+    let t = S.t, left = pend.length;
+    const sp = sparkPos(); let px = sp.x, py = sp.y, ps = sparkS;
+    for (let i = sparkI + 1; i < fuse.length; i++) {
+      const a = fuse[i - 1], b = fuse[i], len = b.s - ps;
+      if (len <= 0) { px = b.x; py = b.y; ps = b.s; continue; }
+      const dts = len / (vAt(t) * ((a.dm > S.t || b.dm > S.t) ? 0.6 : 1));
+      if (left) for (const r of pend) if (r.tick === null) {
+        const f = segCircle(px, py, b.x, b.y, r.x, r.y, r.lr);
+        if (f >= 0) { r.tick = t + dts * f; r.hitS = ps + len * f; left--; }
+      }
+      t += dts; px = b.x; py = b.y; ps = b.s;
+    }
+    S.tEnd = t;
+  }
+
+  // ---------- rockets ----------
+  function refPoint() {
+    let best = null;
+    for (const r of rockets) if (r.st === 'wait' && (!best || r.T > best.T)) best = r;
+    if (best) return { x: best.x, y: best.y, T: best.T };
+    const e = endPt(); return { x: e.x, y: e.y, T: S.tEnd };
+  }
+  function spotOK(x, y, lr) {
+    if (x < 0.07 || x > 0.93 || y < 0.07 || y > FH - 0.07) return false;
+    if (obsDist(x, y) < 0.06 + (lr > 0.05 ? 0.02 : 0)) return false;
+    for (const r of rockets) if (r.st === 'wait' && Math.hypot(r.x - x, r.y - y) < 0.12 + ((r.big || lr > 0.05) ? 0.03 : 0)) return false;
+    if (Math.hypot(x - 0.5, y - (FH - 0.06)) < 0.1) return false;
+    const fz = Math.max(0.05, lr + 0.015), sp = sparkPos();
+    if (Math.hypot(sp.x - x, sp.y - y) < fz) return false;
+    for (let i = sparkI + 1; i < fuse.length; i++) if (Math.abs(fuse[i].x - x) < fz && Math.hypot(fuse[i].x - x, fuse[i].y - y) < fz) return false;
+    return true;
+  }
+  // the straight line from the previous rocket must not run through an obstacle
+  function corridorOK(ax, ay, bx2, by2) {
+    const d = Math.hypot(bx2 - ax, by2 - ay), n = Math.ceil(d / 0.02);
+    for (let i = 1; i < n; i++) { const f = i / n; if (obsDist(ax + (bx2 - ax) * f, ay + (by2 - ay) * f) < 0.035) return false; }
+    return true;
+  }
+  function mkRocket(p, T, big) {
+    let col; do { col = ROCKET_COLS[(Math.random() * ROCKET_COLS.length) | 0]; } while (col === lastCol);
+    lastCol = col;
+    return { id: rid++, x: p.x, y: p.y, T, born: S.t, big, lr: big ? 0.06 : 0.045, rr: big ? 0.09 : 0.065, col, st: 'wait', tick: null, hitS: null, seed: Math.random() * 100, twin: null, res: null, pop: 0 };
+  }
+  function spawn() {
+    const t = S.t, v = vAt(t);
+    const twin = t >= 100 && Math.random() < 0.2;
+    const big = !twin && t >= 60 && Math.random() < 0.15;
+    let T = S.first ? 12 : t + cueAt(t) + (big ? 2 : 0);
+    T = Math.max(T, S.lastCue + 1.2);
+    const ref = refPoint();
+    const maxD = Math.min(0.6, 0.8 * v * (T - ref.T));
+    if (maxD < 0.14) return false;
+    const lr = big ? 0.06 : 0.045;
+    let A = null;
+    for (let k = 0; k < 40 && !A; k++) {
+      const a = Math.random() * TAU, d = 0.14 + Math.random() * (maxD - 0.14);
+      const x = ref.x + Math.cos(a) * d, y = ref.y + Math.sin(a) * d;
+      if (spotOK(x, y, lr) && corridorOK(ref.x, ref.y, x, y)) A = { x, y };
+    }
+    if (!A) return false;
+    let B = null;
+    if (twin) {
+      const dmax = Math.min(0.25, v * 1.3);
+      for (let k = 0; k < 40 && !B; k++) {
+        const a = Math.random() * TAU, d = 0.15 + Math.random() * Math.max(0, dmax - 0.15);
+        const x = A.x + Math.cos(a) * d, y = A.y + Math.sin(a) * d;
+        if (spotOK(x, y, 0.045) && corridorOK(A.x, A.y, x, y)) B = { x, y };
+      }
+      if (!B) return false;
+    }
+    const r1 = mkRocket(A, T, big); rockets.push(r1); S.lastCue = T;
+    if (B) { const r2 = mkRocket(B, T + 1.0, false); r2.col = r1.col; r1.twin = r2; r2.twin = r1; rockets.push(r2); S.lastCue = T + 1.0; }
+    S.first = false;
+    if (!S.warp) GameKit.sound(1040, 0.06, 'sine', 0.025);
+    return true;
+  }
+  function light(r) {
+    r.st = 'lit';
+    const d = S.t - r.T, ad = Math.abs(d), mult = multOf(S.streak), base = r.big ? 3 : 1;
+    let kind, pts;
+    if (ad <= 0.4) { kind = 'Perfect'; pts = Math.round(100 * base * mult); S.streak++; S.perfects++; }
+    else if (ad <= 1.2) { kind = 'Good'; pts = Math.round(40 * base * mult); }
+    else { kind = 'Too soon'; pts = 10 * base; S.streak = 0; }
+    r.res = kind; S.score += pts; S.lit++; S.longest = Math.max(S.longest, S.streak);
+    S.scoreBump = 1; if (kind === 'Perfect') S.multBump = 1;
+    addPop(X(r.x), Y(r.y) - r.rr * U - 6 * K, kind + ' +' + fmt(pts), kind === 'Too soon' ? COL.dust : r.col, kind === 'Perfect' ? 1.15 : 0.95);
+    if (r.twin && r.twin.res === 'Perfect' && kind === 'Perfect') {
+      const b = Math.round(250 * mult); S.score += b;
+      const o = r.twin; addPop((X(r.x) + X(o.x)) / 2, (Y(r.y) + Y(o.y)) / 2 - 34 * K, 'Twins +' + fmt(b), COL.gold, 1.25);
+    }
+    if (kind === 'Perfect' && S.streak > 0 && S.streak % 8 === 0 && S.lives < 3) { S.lives++; stickBack(S.lives - 1); }
+    launch(r, kind);
+  }
+  function dud(r) {
+    r.st = 'dud';
+    tips.push({ x: X(r.x), y: Y(r.y), col: r.col, big: r.big, t: 0, dir: Math.random() < 0.5 ? -1 : 1, seed: r.seed });
+    addPop(X(r.x), Y(r.y) - r.rr * U - 6 * K, 'Dud', COL.coral, 1);
+    puff(X(r.x), Y(r.y), 14);
+    if (DBG.log.length < 40) DBG.log.push(['dud', Math.round(S.t), r.big, !!r.twin, r.tick === null ? 'notick' : Math.round((r.tick - r.T) * 10) / 10]);
+    loseLife();
+  }
+  function loseLife() {
+    S.lives = Math.max(0, S.lives - 1); S.streak = 0; S.shake = 0.15;
+    breakStick(S.lives);
+    sfxSnap(); if (!S.warp) kit.buzz('medium');
+    if (S.lives <= 0) gameOver();
+  }
+
+  // ---------- particles & effects (screen pixels) ----------
+  function P(o) { if (parts.length < 1100) parts.push(o); }
+  function addPop(x, y, txt, col, sz) { if (!S.warp || pops.length < 6) pops.push({ x, y, txt, col, t: 0, sz: sz || 1 }); }
+  function puff(x, y, n) {
+    for (let i = 0; i < n; i++) { const a = Math.random() * TAU, s = (10 + Math.random() * 30) * K; P({ ty: 'dot', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 6 * K, life: 0.8 + Math.random() * 0.6, max: 1.4, col: '#9aa39d', w: (1.2 + Math.random() * 2) * K, g: -4 * K, drag: 0.4, a: 0.6 }); }
+  }
+  function launch(r, kind) {
+    const x = X(r.x), y = Y(r.y);
+    const up = kind === 'Too soon' ? 0.08 : 0.25 + Math.random() * 0.15;
+    const y1 = Math.max(FY + 0.06 * U, y - up * U);
+    streaks.push({ x, y0: y, y1, t: 0, dur: kind === 'Too soon' ? 0.15 : 0.35, col: r.col, kind, big: r.big, done: false });
+    P({ ty: 'ring', x, y, r0: r.rr * U, r1: r.rr * U * 1.9, life: 0.45, max: 0.45, col: kind === 'Perfect' ? COL.gold : r.col, w: 3 * K, a: 0.9 });
+    if (kind !== 'Too soon') sfxLaunch(); else sfxPfft();
+  }
+  function burstAt(x, y, col, kind, big) {
+    const soon = kind === 'Too soon';
+    const n = soon ? 8 : (big ? 40 : 24 + (kind === 'Perfect' ? 6 : 0) + ((Math.random() * 6) | 0));
+    const sp = (soon ? 45 : 150) * K * (big ? 1.25 : 1);
+    if (!soon) P({ ty: 'ring', x, y, r0: 2 * K, r1: 26 * K * (big ? 1.5 : 1), life: 0.3, max: 0.3, col: COL.core, w: 3 * K, a: 0.9 });
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU + Math.random() * 0.2, s = sp * (0.8 + Math.random() * 0.35);
+      P({ ty: 'ln', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: soon ? 0.5 : 1.6 * (0.8 + Math.random() * 0.3), max: soon ? 0.5 : 1.6, col, w: 2.4 * K, len: 0.11, g: 30 * K, drag: 0.25, a: 1 });
+    }
+    if (kind === 'Perfect' || big) {
+      for (let i = 0; i < 16; i++) { const a = i / 16 * TAU + 0.1, s = sp * 0.5; P({ ty: 'ln', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1.3, max: 1.3, col: COL.chalk, w: 1.8 * K, len: 0.09, g: 20 * K, drag: 0.3, a: 0.9 }); }
+      for (let i = 0; i < 22; i++) { const a = Math.random() * TAU, s = sp * (0.3 + Math.random() * 0.7); P({ ty: 'crk', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.9 + Math.random() * 0.6, max: 1.5, col: '#ffffff', w: 1.4 * K, g: 14 * K, drag: 0.3, a: 1 }); }
+    }
+    if (big) {
+      for (let i = 0; i < 20; i++) { const a = i / 20 * TAU, s = sp * 1.35; P({ ty: 'ln', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1.7, max: 1.7, col, w: 2 * K, len: 0.1, g: 26 * K, drag: 0.3, a: 0.9 }); }
+      for (let i = 0; i < 18; i++) { const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.6, s = sp * (0.55 + Math.random() * 0.4); P({ ty: 'ln', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 2.4, max: 2.4, col: COL.gold, w: 1.6 * K, len: 0.22, g: 60 * K, drag: 0.45, a: 0.75 }); }
+    }
+    sfxBurst(kind, big);
+  }
+  function sputter(x, y) {
+    const a = Math.random() * TAU, s = (30 + Math.random() * 50) * K;
+    P({ ty: 'spk', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 10 * K, life: 0.22 + Math.random() * 0.25, max: 0.47, col: Math.random() < 0.5 ? COL.sp1 : COL.sp2, w: 1.5 * K, len: 0.05, g: 60 * K, drag: 0.2, a: 1 });
+  }
+  function breakStick(i) {
+    if (i < 0 || i > 2 || !sticks[i]) return;
+    sticks[i] = false;
+    const s = stickRect(i);
+    for (const side of [-1, 1]) P({ ty: 'piece', x: s.x + side * s.l * 0.25, y: s.y, vx: side * (30 + Math.random() * 30) * K, vy: -(70 + Math.random() * 40) * K, rot: 0, vr: side * (3 + Math.random() * 3), l: s.l * 0.48, h: s.h, col: STICK_COLS[i], life: 1.3, max: 1.3, g: 420 * K, drag: 0.9, a: 1 });
+    for (let k = 0; k < 10; k++) P({ ty: 'dot', x: s.x + (Math.random() - 0.5) * 8, y: s.y, vx: (Math.random() - 0.5) * 60 * K, vy: -Math.random() * 50 * K, life: 0.8, max: 0.8, col: STICK_COLS[i], w: 1.5 * K, g: 80 * K, drag: 0.5, a: 0.8 });
+  }
+  function stickBack(i) {
+    if (i < 0 || i > 2) return;
+    sticks[i] = true; stickFx[i] = 1;
+    const s = stickRect(i);
+    for (let k = 0; k < 18; k++) { const a = Math.random() * TAU, sp = (15 + Math.random() * 40) * K; P({ ty: 'crk', x: s.x + (Math.random() - 0.5) * s.l, y: s.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 20 * K, life: 1, max: 1, col: COL.gold, w: 1.4 * K, g: -10 * K, drag: 0.5, a: 1 }); }
+    addPop(s.x, s.y - 26 * K, 'Chalk back!', COL.gold, 1);
+    sfxRegain();
+  }
+  function stickRect(i) { const l = Math.min(0.17 * W, 72 * K), gap = 16 * K; return { x: W / 2 + (i - 1) * (l + gap), y: trayY + trayH * 0.36, l, h: Math.max(6, trayH * 0.24) }; }
+
+  function updateFx(dt) {
+    for (const p of parts) {
+      p.life -= dt;
+      const dr = Math.pow(p.drag === undefined ? 1 : p.drag, dt);
+      p.vx *= dr; p.vy = p.vy * dr + (p.g || 0) * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.ty === 'piece') p.rot += p.vr * dt;
+      if (p.life <= 0 && (p.ty === 'spk' || p.ty === 'ln') && Math.random() < (p.ty === 'spk' ? 0.6 : 0.25) && parts.length < 1000) {
+        p.dead = { ty: 'dot', x: p.x, y: p.y, vx: (Math.random() - 0.5) * 6 * K, vy: -(2 + Math.random() * 5) * K, life: 1 + Math.random(), max: 2, col: COL.dust, w: 1 * K, g: 0, drag: 0.9, a: 0.35 };
+      }
+    }
+    const born = [];
+    for (const p of parts) if (p.dead) born.push(p.dead);
+    parts = parts.filter((p) => p.life > 0).concat(born);
+    for (const s of streaks) {
+      s.t += dt;
+      if (!s.done && s.t >= s.dur) { s.done = true; burstAt(s.x, s.y1, s.col, s.kind, s.big); }
+    }
+    streaks = streaks.filter((s) => s.t < s.dur + 0.35);
+    for (const p of pops) p.t += dt;
+    pops = pops.filter((p) => p.t < 1.2);
+    for (const tp of tips) tp.t += dt;
+    tips = tips.filter((tp) => tp.t < 1.5);
+    for (const e of erased) e.t += dt;
+    erased = erased.filter((e) => e.t < 0.25);
+    for (let i = 0; i < 3; i++) stickFx[i] = Math.max(0, stickFx[i] - dt);
+    S.shake = Math.max(0, S.shake - dt);
+    S.spoolFlash = Math.max(0, S.spoolFlash - dt);
+    S.endPulse = Math.max(0, S.endPulse - dt * 1.7);
+    S.scoreBump = Math.max(0, S.scoreBump - dt * 4);
+    S.multBump = Math.max(0, S.multBump - dt * 3);
+    // ambient chalk dust drifting up
+    S.ambT -= dt;
+    if (S.ambT <= 0 && !S.warp) {
+      S.ambT = 0.35 + Math.random() * 0.4;
+      P({ ty: 'dot', x: FW + Math.random() * (W - 2 * FW), y: trayY - Math.random() * (trayY - FY) * 0.3, vx: (Math.random() - 0.5) * 4, vy: -(5 + Math.random() * 8) * K, life: 5 + Math.random() * 4, max: 9, col: COL.dust, w: (0.8 + Math.random()) * K, g: 0, drag: 1, a: 0.3 });
+    }
+  }
+
+  // ---------- sound (WebAudio, silent until the first tap) ----------
+  const SND = { ctx: null, noise: null, out: null };
+  function audioUnlock() {
+    try {
+      if (!SND.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+        SND.ctx = new AC();
+        const n = SND.ctx.createBuffer(1, Math.floor(SND.ctx.sampleRate * 0.6), SND.ctx.sampleRate), d = n.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        SND.noise = n; SND.out = SND.ctx.createGain(); SND.out.gain.value = 0.9; SND.out.connect(SND.ctx.destination);
+      }
+      if (SND.ctx.state === 'suspended') SND.ctx.resume();
+    } catch (e) {}
+  }
+  function nz(dur, f, q, vol, type, delay) {
+    if (!SND.ctx || S.warp || document.hidden) return;
+    try {
+      const c = SND.ctx, t0 = c.currentTime + (delay || 0);
+      const src = c.createBufferSource(); src.buffer = SND.noise;
+      const fl = c.createBiquadFilter(); fl.type = type || 'bandpass'; fl.frequency.value = f; fl.Q.value = q;
+      const g = c.createGain(); g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      src.connect(fl).connect(g).connect(SND.out);
+      src.start(t0, Math.random() * 0.4); src.stop(t0 + dur + 0.02);
+    } catch (e) {}
+  }
+  function tone(f0, f1, dur, type, vol, delay) {
+    if (!SND.ctx || S.warp || document.hidden) return;
+    try {
+      const c = SND.ctx, t0 = c.currentTime + (delay || 0);
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type || 'sine'; o.frequency.setValueAtTime(f0, t0); if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g).connect(SND.out); o.start(t0); o.stop(t0 + dur + 0.02);
+    } catch (e) {}
+  }
+  const PENTA = [0, 2, 4, 7, 9];
+  function sfxScratch() { nz(0.02, 2400 + Math.random() * 1600, 1.2, 0.022); }
+  function sfxCrackle() { nz(0.01, 5200, 0.7, 0.012, 'highpass'); }
+  function sfxLaunch() { tone(600, 1400, 0.3, 'sine', 0.03); }
+  function sfxPfft() { nz(0.06, 1500, 0.7, 0.035); }
+  function sfxErase() { nz(0.2, 900, 0.5, 0.03, 'lowpass'); }
+  function sfxBurst(kind, big) {
+    if (kind === 'Too soon') { nz(0.08, 900, 0.8, 0.03, 'lowpass'); return; }
+    nz(big ? 0.3 : 0.18, 1100, 0.6, big ? 0.07 : 0.05, 'lowpass'); tone(90, 70, 0.12, 'sine', 0.09);
+    if (kind === 'Perfect') {
+      const st = Math.max(0, S.streak - 1), m = Math.pow(2, (PENTA[st % 5] + 12 * Math.min(2, Math.floor(st / 5))) / 12);
+      tone(880 * m, 880 * m, 0.16, 'sine', 0.035, 0.02); tone(1320 * m, 1320 * m, 0.22, 'sine', 0.03, 0.1);
+    }
+  }
+  function sfxSnap() { nz(0.04, 2500, 1, 0.06); tone(180, 150, 0.1, 'triangle', 0.06); }
+  function sfxRegain() { tone(660, 660, 0.12, 'triangle', 0.04); tone(990, 990, 0.18, 'triangle', 0.035, 0.09); }
+
+  // ---------- game flow ----------
+  function startGame() {
+    S.seed = (Math.random() * 1e9) | 0;
+    obstacles = makeObstacles(); bake();
+    resetFuse();
+    rockets = []; clouds = []; streaks = []; tips = []; pops = []; erased = [];
+    parts = parts.filter((p) => p.ty === 'dot' && p.a < 0.4);
+    sticks = [true, true, true]; stickFx = [0, 0, 0];
+    Object.assign(S, { mode: 'play', t: 0, overT: 0, score: 0, lives: 3, streak: 0, lit: 0, perfects: 0, longest: 0, nextSpawn: 2, lastCue: 0, first: true,
+      nextCloud: 150, shake: 0, newBest: false, smoulder: 0, stuck: false, drew: false, hold: S.tutorial ? 6 : 1.2, tEnd: 0, spoolFlash: 0, endPulse: 0, blockX: null, crackT: 0, sputT: 0 });
+    AP.q = []; AP.qi = 0; AP.target = null; AP.check = 0.3; AP.acc = 0;
+    drag = null;
+    predict();
+    if (!S.warp) { kit.buzz(); tone(520, 780, 0.12, 'triangle', 0.04); }
+  }
+  function gameOver() {
+    S.mode = 'over'; S.overT = 0; drag = null;
+    S.newBest = kit.saveBest(S.score); S.best = kit.best();
+    if (S.tutorial) { S.tutorial = false; kit.set('seen', true); }
+    const sp = sparkPos(); puff(X(sp.x), Y(sp.y), 22);
+    for (const r of rockets) if (r.st === 'wait') { r.st = 'dud'; tips.push({ x: X(r.x), y: Y(r.y), col: r.col, big: r.big, t: -Math.random() * 0.3, dir: Math.random() < 0.5 ? -1 : 1, seed: r.seed }); }
+    rockets = [];
+    if (!S.warp) { kit.buzz('heavy'); tone(260, 110, 0.6, 'triangle', 0.05, 0.1); }
+  }
+
+  function update(dt) {
+    S.real += dt;
+    updateFx(dt);
+    if (S.mode === 'title') { S.titleT += dt; return; }
+    if (S.mode === 'over') { S.overT += dt; return; }
+    if (S.mode !== 'play') return;
+    S.t += dt;
+
+    if (S.hold > 0) S.hold = S.drew ? 0 : S.hold - dt;
+    const stuck = S.hold > 0 ? false : burn(dt);
+    if (S.mode !== 'play') return;
+    S.stuck = stuck;
+    if (stuck) {
+      S.smoulder += dt;
+      if (S.smoulder >= 1.5) { S.smoulder = -3; if (DBG.log.length < 40) DBG.log.push(['smoulder', Math.round(S.t)]); const sp = sparkPos(); puff(X(sp.x), Y(sp.y), 10); loseLife(); if (S.mode !== 'play') return; }
+    } else S.smoulder = 0;
+
+    for (const r of rockets) if (r.st === 'wait' && S.t > r.T + 1.2) { dud(r); if (S.mode !== 'play') return; }
+    rockets = rockets.filter((r) => r.st === 'wait');
+
+    // drizzle
+    if (S.t >= S.nextCloud) {
+      S.nextCloud += 30;
+      const fromLeft = Math.random() < 0.5;
+      clouds.push({ x: fromLeft ? -0.3 : 1.3, y: 0.25 + Math.random() * Math.max(0.1, FH - 0.5), vx: fromLeft ? 0.06 : -0.06, seed: Math.random() * 100 });
+    }
+    for (const c of clouds) {
+      c.x += c.vx * dt;
+      for (let i = sparkI; i < fuse.length; i++) {
+        const p = fuse[i], ex = (p.x - c.x) / 0.225, ey = (p.y - c.y) / 0.15;
+        if (ex * ex + ey * ey <= 1) p.dm = S.t + 5;
+      }
+    }
+    clouds = clouds.filter((c) => c.x > -0.4 && c.x < 1.4);
+
+    // let old ash go
+    while (fuse.length > 2 && sparkI >= 2 && fuse[1].bt >= 0 && S.t - fuse[1].bt > 4.2) { fuse.shift(); sparkI--; }
+
+    predict();
+    if (S.t >= S.nextSpawn) {
+      if (spawn()) S.nextSpawn = S.t + gapAt(S.t) * (0.8 + Math.random() * 0.4);
+      else S.nextSpawn = S.t + 0.5;
+      predict();
+    }
+    if (AP.on) { apTick(dt); }
+
+    if (!stuck && !S.warp) {
+      const sp = sparkPos();
+      S.sputT -= dt; if (S.sputT <= 0) { S.sputT = 1 / (8 + Math.random() * 4); sputter(X(sp.x), Y(sp.y)); }
+      S.crackT -= dt; if (S.crackT <= 0) { S.crackT = 0.08 + Math.random() * 0.12; sfxCrackle(); }
+    }
+  }
+
+  // ---------- demo autopilot ----------
+  function chaikin(p, passes) {
+    for (let k = 0; k < passes; k++) {
+      if (p.length < 3) return p;
+      const q = [p[0]];
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i], b = p[i + 1];
+        q.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 }, { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 });
+      }
+      q.push(p[p.length - 1]); p = q;
+    }
+    return p;
+  }
+  function resample(p, st) {
+    const out = [{ x: p[0].x, y: p[0].y }]; let carry = 0;
+    for (let i = 0; i < p.length - 1; i++) {
+      const a = p[i], b = p[i + 1], L = Math.hypot(b.x - a.x, b.y - a.y);
+      let pos = st - carry;
+      while (pos <= L) { const f = pos / L; out.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f }); pos += st; }
+      carry = L - (pos - st);
+    }
+    const last = p[p.length - 1], o = out[out.length - 1];
+    if (Math.hypot(last.x - o.x, last.y - o.y) > 0.002) out.push({ x: last.x, y: last.y });
+    return out;
+  }
+  const smooth = (ctrl) => resample(chaikin(ctrl, 2), STEP);
+  function hitS(pts, r) {
+    let s = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], L = Math.hypot(b.x - a.x, b.y - a.y);
+      const f = segCircle(a.x, a.y, b.x, b.y, r.x, r.y, r.lr);
+      if (f >= 0) return s + L * f;
+      s += L;
+    }
+    return -1;
+  }
+  function trimAfter(pts, sMax) {
+    let s = 0;
+    for (let i = 1; i < pts.length; i++) { s += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); if (s >= sMax) return pts.slice(0, i + 1); }
+    return pts;
+  }
+  function buildGrid() {
+    const g = new Map();
+    const add = (x, y, s) => { const k = Math.floor(x / 0.05) * 1000 + Math.floor(y / 0.05); let a = g.get(k); if (!a) g.set(k, a = []); a.push(x, y, s); };
+    const sp = sparkPos(); add(sp.x, sp.y, sparkS);
+    for (let i = sparkI + 1; i < fuse.length; i++) add(fuse[i].x, fuse[i].y, fuse[i].s);
+    return g;
+  }
+  function gridNear(g, x, y, r, sMax) {
+    const cx = Math.floor(x / 0.05), cy = Math.floor(y / 0.05), r2 = r * r;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      const a = g.get((cx + i) * 1000 + cy + j); if (!a) continue;
+      for (let k = 0; k < a.length; k += 3) if (a[k + 2] <= sMax && (a[k] - x) * (a[k] - x) + (a[k + 1] - y) * (a[k + 1] - y) < r2) return true;
+    }
+    return false;
+  }
+  function dryRun(pts, others, grid) {
+    const es = endS(), n = pts.length, arc = new Float64Array(n);
+    for (let i = 1; i < n; i++) arc[i] = arc[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    for (let i = 1; i < n; i++) {
+      const p = pts[i];
+      if (p.x < 0.038 || p.x > 0.962 || p.y < 0.038 || p.y > FH - 0.038) return false;
+      if (obsDist(p.x, p.y) < 0.028) return false;
+      for (const o of others) { const lim = o.lr + 0.035; if ((p.x - o.x) * (p.x - o.x) + (p.y - o.y) * (p.y - o.y) < lim * lim) return false; }
+      if (gridNear(grid, p.x, p.y, 0.042, es + arc[i] - SELF_IGNORE)) return false;
+      const lim = arc[i] - SELF_IGNORE;
+      for (let j = 0; j < i && arc[j] <= lim; j++) { const q = pts[j]; if ((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y) < 0.042 * 0.042) return false; }
+    }
+    return true;
+  }
+  function rawLen(c) { let l = 0; for (let i = 1; i < c.length; i++) l += Math.hypot(c[i].x - c[i - 1].x, c[i].y - c[i - 1].y); return l; }
+  function selfOK(pts) {
+    const n = pts.length, arc = new Float64Array(n), r2 = 0.042 * 0.042;
+    for (let i = 1; i < n; i++) arc[i] = arc[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    for (let i = 1; i < n; i++) { const p = pts[i], lim = arc[i] - SELF_IGNORE; for (let j = 0; j < i && arc[j] <= lim; j++) { const q = pts[j]; if ((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y) < r2) return false; } }
+    return true;
+  }
+  function meanders(E0, R, need, tgt, out, lead) {
+    const E = lead.length ? lead[lead.length - 1] : E0;
+    const dx = R.x - E.x, dy = R.y - E.y, base = Math.atan2(dy, dx), p = 0.08;
+    for (const phi of [0, 0.5, -0.5, 1.05, -1.05, 1.57, -1.57]) {
+      const wx = Math.cos(base + phi), wy = Math.sin(base + phi), nx = -wy, ny = wx;
+      for (let k = 1; k <= 4; k++) for (const offF of [0, 1, -1]) for (const s0 of [1, -1]) {
+        const build = (A) => {
+          const off = offF * A, c = [E0].concat(lead);
+          for (let j = 0; j < k; j++) {
+            const bx2 = E.x + wx * (0.05 + j * p), by2 = E.y + wy * (0.05 + j * p), sg = j % 2 === 0 ? s0 : -s0;
+            c.push({ x: bx2 + nx * (off + sg * A), y: by2 + ny * (off + sg * A) }, { x: bx2 + nx * (off - sg * A), y: by2 + ny * (off - sg * A) });
+          }
+          c.push(R); return c;
+        };
+        // solve on the raw polygon first (cheap), then correct for smoothing with two secant steps
+        let lo = 0.03, hi = 0.42;
+        if (rawLen(build(lo)) - tgt.lr > need + 0.03) continue;
+        if (rawLen(build(hi)) - tgt.lr < need - 0.02) continue;
+        for (let it = 0; it < 14; it++) { const mid = (lo + hi) / 2; if (rawLen(build(mid)) - tgt.lr < need) lo = mid; else hi = mid; }
+        let A = (lo + hi) / 2, best = null, be = 9;
+        for (let it = 0; it < 3; it++) {
+          const pm = smooth(build(A)), hm = hitS(pm, tgt);
+          if (hm < 0) break;
+          const e = hm - need; if (Math.abs(e) < be) { be = Math.abs(e); best = pm; }
+          if (Math.abs(e) < 0.004) break;
+          A = clamp(A - e / (2 * k + 0.5), 0.03, 0.45);
+        }
+        if (best && selfOK(trimAfter(best, hitS(best, tgt) + 0.018))) out.push({ pts: best, err: be });
+      }
+    }
+  }
+  // direction the fuse is heading at its end
+  function endDir() {
+    const e = endPt();
+    for (let i = fuse.length - 2; i >= 0; i--) {
+      const q = fuse[i], d = Math.hypot(e.x - q.x, e.y - q.y);
+      if (d >= 0.03 || i === 0) return d > 1e-6 ? { x: (e.x - q.x) / d, y: (e.y - q.y) / d } : null;
+    }
+    return null;
+  }
+  function leadOuts(E, dir) {
+    const out = [[]];
+    if (!dir) return out;
+    out.push([{ x: E.x + dir.x * 0.05, y: E.y + dir.y * 0.05 }]);
+    const rho = 0.065;
+    for (const side of [1, -1]) for (const turn of [Math.PI / 2, Math.PI]) {
+      const nx = -dir.y * side, ny = dir.x * side, cx = E.x + nx * rho, cy = E.y + ny * rho, pts = [];
+      const vx = E.x - cx, vy = E.y - cy;
+      for (let a = Math.PI / 6; a <= turn + 1e-6; a += Math.PI / 6) {
+        const c = Math.cos(a * side), sn = Math.sin(a * side);
+        pts.push({ x: cx + vx * c + vy * sn * -1, y: cy + vx * sn + vy * c });
+      }
+      out.push(pts);
+    }
+    return out;
+  }
+  function findPath(E, tgt, need, others, grid, nextR) {
+    const R = { x: tgt.x, y: tgt.y }, cands = [], dir = endDir();
+    const leads = leadOuts(E, dir);
+    const add1 = (ctrl) => {
+      const raw = rawLen(ctrl) - tgt.lr;
+      if (raw < need - 0.03 || raw > need + 0.16) { if (ctrl.length > 2 + (dir ? 1 : 0)) return; }
+      const pts = smooth(ctrl), h = hitS(pts, tgt); if (h >= 0) cands.push({ pts, err: Math.abs(h - need) });
+    };
+    const add = (rest) => { for (const ld of leads) add1([E].concat(ld, rest)); };
+    add([R]);
+    for (let gx = 0.05; gx < 0.96; gx += 0.075) for (let gy = 0.05; gy < FH - 0.03; gy += 0.075) add([{ x: gx, y: gy }, R]);
+    const rp = () => ({ x: 0.06 + Math.random() * 0.88, y: 0.06 + Math.random() * (FH - 0.12) });
+    for (let k = 0; k < 120; k++) add([rp(), rp(), R]);
+    const D = Math.hypot(R.x - E.x, R.y - E.y);
+    if (need > D * 1.12) for (let i = 0; i < Math.min(4, leads.length); i++) meanders(E, R, need, tgt, cands, leads[i]);
+    cands.sort((a, b) => a.err - b.err);
+    let tries = 0, best = null, bestSc = -9, firstErr = -1;
+    const tol = Math.max(0.02, 0.2 * vAt(S.t)), allOthers = rockets.filter((r) => r.st === 'wait' && r !== tgt);
+    for (const c of cands) {
+      if (firstErr >= 0 && c.err > Math.max(tol, firstErr + 0.004)) break;
+      if (dir && c.pts.length > 4) { const q = c.pts[4], dx = q.x - E.x, dy = q.y - E.y, l = Math.hypot(dx, dy) || 1; if ((dx * dir.x + dy * dir.y) / l < 0.1) continue; }
+      if (tries++ > 260) break;
+      const pts = trimAfter(c.pts, hitS(c.pts, tgt) + 0.018);
+      if (!dryRun(pts, others, grid)) continue;
+      if (firstErr < 0) firstErr = c.err;
+      let sc = endRoom(pts, grid, allOthers);
+      if (nextR) sc += towardNext(pts, nextR, grid);
+      if (sc > bestSc) { bestSc = sc; best = pts; }
+      if (sc > (nextR ? 1.0 : 0.55)) break;
+    }
+    if (best) return best;
+    return null;
+  }
+  // how much free room is ahead of the end of a planned path (so the next leg is not boxed in)
+  function endRoom(pts, grid, others) {
+    const n = pts.length, e = pts[n - 1], q = pts[Math.max(0, n - 4)];
+    let dx = e.x - q.x, dy = e.y - q.y; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    let best = 0;
+    for (const turn of [0, 0.6, -0.6, 1.2, -1.2]) {
+      const c = Math.cos(turn), sn = Math.sin(turn), ux = dx * c - dy * sn, uy = dx * sn + dy * c;
+      let d = 0;
+      for (d = 0.03; d <= 0.6; d += 0.03) {
+        const x = e.x + ux * d, y = e.y + uy * d;
+        if (x < 0.04 || x > 0.96 || y < 0.04 || y > FH - 0.04 || obsDist(x, y) < 0.03) break;
+        if (gridNear(grid, x, y, 0.045, 1e9)) break;
+        let hit = false;
+        for (let i = 0; i < n - 3 && !hit; i += 2) if ((pts[i].x - x) * (pts[i].x - x) + (pts[i].y - y) * (pts[i].y - y) < 0.002) hit = true;
+        for (const o of others) if (!hit && Math.hypot(o.x - x, o.y - y) < o.lr + 0.03) hit = true;
+        if (hit) break;
+      }
+      const v = (d - 0.03) * (turn === 0 ? 1 : (Math.abs(turn) < 1 ? 0.85 : 0.65));
+      if (v > best) best = v;
+    }
+    return best;
+  }
+  // bonus when the end of a path points at the next rocket with a clear straight line to it
+  function towardNext(pts, r, grid) {
+    const n = pts.length, e = pts[n - 1], q = pts[Math.max(0, n - 4)];
+    let dx = e.x - q.x, dy = e.y - q.y; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const tx2 = r.x - e.x, ty2 = r.y - e.y, d = Math.hypot(tx2, ty2) || 1, dot = (dx * tx2 + dy * ty2) / d;
+    let clear = true;
+    for (let s2 = 0.03; s2 < d - r.lr && clear; s2 += 0.02) {
+      const x = e.x + tx2 / d * s2, y = e.y + ty2 / d * s2;
+      if (obsDist(x, y) < 0.03 || gridNear(grid, x, y, 0.045, 1e9)) clear = false;
+      for (let i = 0; i < n - 4 && clear; i += 2) if ((pts[i].x - x) * (pts[i].x - x) + (pts[i].y - y) * (pts[i].y - y) < 0.002) clear = false;
+    }
+    return (clear ? 0.35 : 0) + 0.3 * Math.max(0, dot);
+  }
+  function openness(x, y, waiting, grid) {
+    let m = Math.min(x, 1 - x, y, FH - y, obsDist(x, y) + 0.02);
+    for (const r of waiting) m = Math.min(m, Math.hypot(r.x - x, r.y - y) - 0.05);
+    let fz = 0.3; grid.forEach((a) => { for (let k = 0; k < a.length; k += 3) { const d = Math.hypot(a[k] - x, a[k + 1] - y); if (d < fz) fz = d; } });
+    return Math.min(m, fz * 0.8);
+  }
+  function idlePath(E, waiting, grid) {
+    let best = null, bs = -9;
+    for (let k = 0; k < 16; k++) for (const bend of [-0.8, 0, 0.8]) {
+      const a = k * TAU / 16, a2 = a + bend;
+      const P1 = { x: E.x + Math.cos(a) * 0.2, y: E.y + Math.sin(a) * 0.2 };
+      const P2 = { x: P1.x + Math.cos(a2) * 0.2, y: P1.y + Math.sin(a2) * 0.2 };
+      const pts = smooth([E, P1, P2]);
+      if (!dryRun(pts, waiting, grid)) continue;
+      const sc = openness(P2.x, P2.y, waiting, grid);
+      if (sc > bs) { bs = sc; best = pts; }
+    }
+    if (!best) for (let k = 0; k < 16; k++) {
+      const a = k * TAU / 16, P1 = { x: E.x + Math.cos(a) * 0.12, y: E.y + Math.sin(a) * 0.12 };
+      const pts = smooth([E, P1]);
+      if (dryRun(pts, waiting, grid)) { best = pts; break; }
+    }
+    return best;
+  }
+  function apPlan() {
+    const t0 = performance.now(); apPlan2(); const ms = performance.now() - t0; DBG.ms = Math.max(DBG.ms || 0, ms); DBG.tot = (DBG.tot || 0) + ms; DBG.n = (DBG.n || 0) + 1;
+  }
+  function apPlan2() {
+    let waiting = rockets.filter((r) => r.st === 'wait').sort((a, b) => a.T - b.T);
+    // a tick drifted out of the notch (drizzle, a cut): cut back to the rocket before it and re-route
+    for (const r of waiting) {
+      if (r.tick === null || Math.abs(r.tick - r.T) <= 0.35 || (r.fixT && S.t - r.fixT < 1.5) || r.hitS - sparkS < 0.15) continue;
+      let keep = sparkS + CUT_AHEAD + 0.01;
+      for (const o of waiting) if (o !== r && o.tick !== null && o.hitS < r.hitS) keep = Math.max(keep, o.hitS + 0.02);
+      if (keep >= r.hitS - 0.05) continue;
+      r.fixT = S.t; cutAt(keep); predict(); DBG.fix = (DBG.fix || 0) + 1;
+      break;
+    }
+    const open = waiting.filter((r) => r.tick === null);
+    const target = open[0];
+    const grid = buildGrid();
+    // running late or boxed in? cut the fuse back to just after the last rocket it reaches in time
+    const keepS = () => { let keep = sparkS + CUT_AHEAD + 0.01; for (const r of waiting) if (r.tick !== null && open[0] && r.tick <= open[0].T) keep = Math.max(keep, r.hitS + 0.02); return keep; };
+    if (open[0]) {
+      const tg = open[0], e = endPt(), late = S.tEnd + Math.max(0, Math.hypot(e.x - tg.x, e.y - tg.y) - tg.lr) / vAt(S.t) > tg.T + 0.3;
+      const ks = keepS();
+      if (late && ks < endS() - 0.05) { cutAt(ks); predict(); DBG.cb = (DBG.cb || 0) + 1; }
+    }
+    for (let k = 0; k < Math.min(2, open.length); k++) {
+      const tg = open[k];
+      if (k === 1) { const f0 = open[0]; if (!(AP.failId === f0.id && S.t - AP.failSince > 1.0) && S.tEnd < f0.T + 0.6) break; }
+      const need = vInt(S.tEnd, tg.T);
+      const p = findPath(endPt(), tg, need, waiting.filter((r) => r !== tg && r.tick === null), grid, open[k + 1]);
+      if (p) { AP.q = p; AP.qi = 1; AP.target = tg; return; }
+      DBG.fail++;
+      if (k === 0) {
+        const ks = keepS();
+        if (ks < endS() - 0.05) {
+          const saved = fuse.slice(), sI = sparkI, sS = sparkS;
+          cutAt(ks); predict();
+          const p2 = findPath(endPt(), tg, vInt(S.tEnd, tg.T), waiting.filter((r) => r !== tg && r.tick === null), buildGrid());
+          if (p2) { AP.q = p2; AP.qi = 1; AP.target = tg; DBG.cb2 = (DBG.cb2 || 0) + 1; return; }
+          fuse = saved; sparkI = sI; sparkS = sS; erased.length = Math.max(0, erased.length - 1); predict();
+        }
+        if (backtrack()) return;
+      }
+      if (k === 0 && AP.failId !== tg.id) { AP.failId = tg.id; AP.failSince = S.t; }
+    }
+    if (S.tEnd - S.t < (target ? 4 : 3)) {
+      const p = idlePath(endPt(), waiting.filter((r) => r.tick === null), grid);
+      if (p) { AP.q = p; AP.qi = 1; AP.target = null; DBG.idle++; return; }
+      DBG.cut++;
+      if (S.tEnd - S.t < 2 && endS() - sparkS > 0.3) cutAt(Math.max(sparkS + 0.1, endS() - 0.35));
+    }
+  }
+  // boxed in by our own fuse: cut further back (even past a rocket, which is then re-planned) until a route opens
+  function backtrack() {
+    const es = endS();
+    for (const back of [0.3, 0.6, 0.9, 1.3]) {
+      const c = es - back;
+      if (c < sparkS + CUT_AHEAD + 0.02) break;
+      const saved = fuse.slice(), sI = sparkI, sS = sparkS, ne = erased.length;
+      cutAt(c); predict();
+      const waiting = rockets.filter((r) => r.st === 'wait').sort((a, b) => a.T - b.T), open = waiting.filter((r) => r.tick === null);
+      const tg = open[0];
+      if (tg) {
+        const p = findPath(endPt(), tg, vInt(S.tEnd, tg.T), waiting.filter((r) => r !== tg && r.tick === null), buildGrid(), open[1]);
+        if (p) { AP.q = p; AP.qi = 1; AP.target = tg; DBG.bt = (DBG.bt || 0) + 1; return true; }
+      }
+      fuse = saved; sparkI = sI; sparkS = sS; erased.length = ne; predict();
+    }
+    return false;
+  }
+  function apTick(dt) {
+    if (AP.qi < AP.q.length) {
+      AP.acc += 0.9 * dt;
+      while (AP.acc > 0 && AP.qi < AP.q.length) {
+        const p = AP.q[AP.qi];
+        let clash = false;
+        for (const r of rockets) if (r !== AP.target && r.st === 'wait' && r.tick === null && Math.hypot(r.x - p.x, r.y - p.y) < r.lr + 0.02) clash = true;
+        if (clash) { DBG.clash++; AP.q = []; AP.qi = 0; break; }
+        const c = canStep(p.x, p.y);
+        if (c === 2) { AP.acc = 0; break; }
+        if (c === 1) { DBG.block++; AP.q = []; AP.qi = 0; break; }
+        const e = endPt(), d = Math.hypot(p.x - e.x, p.y - e.y);
+        addPt(p.x, p.y); AP.qi++; AP.acc -= Math.max(d, 0.004);
+        S.drew = true;
+      }
+      if (AP.qi >= AP.q.length) { AP.q = []; AP.qi = 0; AP.check = 0; }
+      const e = endPt(); AP.fx = e.x; AP.fy = e.y;
+      return;
+    }
+    AP.check -= dt;
+    if (AP.check > 0) return;
+    AP.check = 0.25;
+    apPlan();
+  }
+  function warpTo(tt) {
+    S.warp = true;
+    let n = 0;
+    while (S.mode === 'play' && S.t < tt && n++ < 30000) update(1 / 60);
+    S.warp = false;
+    parts = parts.filter((p) => p.life > 0);
+  }
+
+  // ---------- input ----------
+  function toU(e) { return { x: (e.clientX - FX) / U, y: (e.clientY - FY) / U }; }
+  cv.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    audioUnlock();
+    if (S.mode === 'title') { GameKit.sound(700, 0.05, 'triangle', 0.04); startGame(); return; }
+    if (S.mode === 'over') { if (S.overT > 0.6) startGame(); return; }
+    if (S.mode === 'paused') { S.mode = 'play'; return; }
+    if (S.mode !== 'play' || AP.on || drag) return;
+    const u = toU(e), en = endPt();
+    if (Math.hypot(u.x - en.x, u.y - en.y) <= END_GRAB) { drag = { id: e.pointerId, blocked: false }; S.drew = true; }
+    else {
+      const s = nearestCut(u.x, u.y);
+      if (s !== null) { cutAt(s); drag = { id: e.pointerId, blocked: false }; S.drew = true; }
+      else { S.endPulse = 1; return; }
+    }
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id || S.mode !== 'play') return;
+    const list = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+    if (list && list.length) for (const ce of list) { const u = toU(ce); drawToward(u.x, u.y); }
+    else { const u = toU(e); drawToward(u.x, u.y); }
+  });
+  const up = (e) => { if (drag && e.pointerId === drag.id) { drag = null; S.blockX = null; } };
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+  kit.onPause(() => { if (S.mode === 'play') S.mode = 'paused'; drag = null; });
+
+  // ---------- rendering ----------
+  function drawLantern(g) {
+    const cx = X(0.5), cy = Y(FH - 0.06), s = 0.03 * U;
+    const fl = 0.75 + 0.25 * Math.sin(S.real * 9) * Math.sin(S.real * 5.3 + 1);
+    g.fillStyle = COL.gold; g.globalAlpha = 0.35 + 0.25 * fl; g.beginPath(); g.ellipse(cx, cy, s * 0.45, s * 0.6, 0, 0, TAU); g.fill(); g.globalAlpha = 1;
+    chalk(g, (h) => { h.moveTo(cx - s * 0.8, cy - s * 0.9); h.lineTo(cx + s * 0.8, cy - s * 0.9); h.lineTo(cx + s * 0.95, cy + s); h.lineTo(cx - s * 0.95, cy + s); h.closePath(); }, COL.mint, 2 * K, 0.95);
+    chalk(g, (h) => { h.moveTo(cx - s * 0.5, cy - s * 0.9); h.lineTo(cx, cy - s * 1.35); h.lineTo(cx + s * 0.5, cy - s * 0.9); }, COL.mint, 1.8 * K, 0.9);
+    chalk(g, (h) => { h.arc(cx, cy - s * 1.55, s * 0.3, Math.PI * 0.9, Math.PI * 2.1); }, COL.mint, 1.4 * K, 0.8);
+  }
+  function drawCord(g, pts, col, tickCol) {
+    if (pts.length < 2) return;
+    const n = pts.length, L = [], R = [], o = 1.5 * K;
+    for (let i = 0; i < n; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+      let tx2 = b.x - a.x, ty2 = b.y - a.y; const l = Math.hypot(tx2, ty2) || 1; tx2 /= l; ty2 /= l;
+      L.push([pts[i].x - ty2 * o, pts[i].y + tx2 * o]); R.push([pts[i].x + ty2 * o, pts[i].y - tx2 * o]);
+    }
+    g.strokeStyle = col; g.lineWidth = 1.45 * K; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath();
+    for (const side of [L, R]) { g.moveTo(side[0][0], side[0][1]); for (let i = 1; i < n; i++) g.lineTo(side[i][0], side[i][1]); }
+    g.stroke();
+    g.strokeStyle = tickCol; g.lineWidth = 1 * K; g.beginPath();
+    let acc = 3 * K;
+    for (let i = 1; i < n; i++) {
+      const a = pts[i - 1], b = pts[i], l = Math.hypot(b.x - a.x, b.y - a.y); if (l <= 0) continue;
+      const ux = (b.x - a.x) / l, uy = (b.y - a.y) / l;
+      while (acc <= l) {
+        const x = a.x + ux * acc, y = a.y + uy * acc;
+        g.moveTo(x - uy * o - ux * 1.6 * K, y + ux * o - uy * 1.6 * K); g.lineTo(x + uy * o + ux * 1.6 * K, y - ux * o + uy * 1.6 * K);
+        acc += 6 * K;
+      }
+      acc -= l;
+    }
+    g.stroke();
+  }
+  function drawFuse(g) {
+    // ash behind the spark
+    g.strokeStyle = COL.ash; g.lineWidth = 2.2 * K; g.lineCap = 'round';
+    for (let i = 1; i <= sparkI && i < fuse.length; i++) {
+      const a = fuse[i - 1], b = fuse[i], al = 1 - (S.t - b.bt) / 4;
+      if (al <= 0) continue;
+      g.globalAlpha = al * 0.75; g.beginPath(); g.moveTo(X(a.x), Y(a.y)); g.lineTo(X(b.x), Y(b.y)); g.stroke();
+    }
+    const sp = sparkPos();
+    if (sparkI < fuse.length) { const a = fuse[sparkI]; g.globalAlpha = 0.75; g.beginPath(); g.moveTo(X(a.x), Y(a.y)); g.lineTo(X(sp.x), Y(sp.y)); g.stroke(); }
+    g.globalAlpha = 1;
+    // unlit cord, damp runs in blue
+    const pts = [{ x: sp.x, y: sp.y, d: (fuse[sparkI].dm > S.t) }];
+    for (let i = sparkI + 1; i < fuse.length; i++) pts.push({ x: fuse[i].x, y: fuse[i].y, d: fuse[i].dm > S.t });
+    if (pts.length < 2) return;
+    const sm = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1], d = a.d || b.d;
+      sm.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, d }, { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, d });
+    }
+    sm.push(pts[pts.length - 1]);
+    let run = [], dmp = sm[0].d;
+    const flush = () => { if (run.length > 1) drawCord(g, run, dmp ? COL.damp : COL.cord, dmp ? '#6aa7cf' : COL.cordTick); };
+    for (const p of sm) {
+      const q = { x: X(p.x), y: Y(p.y) };
+      if (p.d !== dmp && run.length) { run.push(q); flush(); run = [q]; dmp = p.d; } else run.push(q);
+    }
+    flush();
+  }
+  function drawRocketBody(g, col, big, seed) {
+    const k = big ? 1.4 : 1, rb = 0.026 * U * k;
+    g.fillStyle = col; g.globalAlpha = 0.14; g.beginPath(); g.arc(0, 0, rb, 0, TAU); g.fill(); g.globalAlpha = 1;
+    chalk(g, (h) => wcirc(h, 0, 0, rb, seed), col, 1.8 * K, 0.8);
+    if (big) chalk(g, (h) => wcirc(h, 0, 0, rb * 1.22, seed + 2), col, 1.3 * K, 0.7);
+    const tw = rb * 0.62, top = -rb * 0.45, bot = rb * 0.62;
+    g.fillStyle = col; g.globalAlpha = 0.85; g.fillRect(-tw / 2, top, tw, bot - top); g.globalAlpha = 1;
+    chalk(g, (h) => { h.moveTo(-tw / 2, top); h.lineTo(-tw / 2, bot); h.lineTo(tw / 2, bot); h.lineTo(tw / 2, top); }, COL.chalk, 1.3 * K, 0.9);
+    chalk(g, (h) => { h.moveTo(-tw / 2 - 1.5 * K, top); h.lineTo(0, top - rb * 0.75); h.lineTo(tw / 2 + 1.5 * K, top); h.closePath(); }, COL.chalk, 1.6 * K, 0.95);
+    chalk(g, (h) => { h.moveTo(0, bot); h.lineTo(0, bot + rb * 0.55); }, COL.cordTick, 1.4 * K, 0.9);
+    if (big) chalk(g, (h) => { h.moveTo(-tw / 2, top + (bot - top) * 0.35); h.lineTo(tw / 2, top + (bot - top) * 0.25); h.moveTo(-tw / 2, top + (bot - top) * 0.7); h.lineTo(tw / 2, top + (bot - top) * 0.6); }, COL.chalk, 1.2 * K, 0.95);
+    g.fillStyle = col; g.beginPath(); star4(g, rb * 0.95, -rb * 0.85, 3.2 * K * k); g.fill();
+  }
+  function drawRocket(g, r, drawing) {
+    const cx = X(r.x), cy = Y(r.y), RR = r.rr * U, C = Math.max(0.5, r.T - r.born);
+    const frac = clamp((S.t - r.born) / C, 0, 1), late = S.t > r.T;
+    const tk = r.tick, perfect = tk !== null && Math.abs(tk - r.T) <= 0.4, soon = tk !== null && tk < r.T - 1.2, lateTk = tk !== null && tk > r.T + 0.4;
+    r.pop = Math.min(1, r.pop + 1 / 60 * 4);
+    const sc = easeOutBack(r.pop);
+    g.save(); g.translate(cx, cy); g.scale(sc, sc);
+    if (perfect) {
+      const pu = 0.5 + 0.5 * Math.sin(S.real * 8);
+      g.strokeStyle = COL.gold; g.lineWidth = 2.2 * K; g.globalAlpha = (drawing ? 0.75 : 0.5) + 0.2 * pu; g.beginPath(); g.arc(0, 0, RR + 4.5 * K, 0, TAU); g.stroke();
+      g.lineWidth = 1.2 * K; g.globalAlpha = (drawing ? 0.4 : 0.22) * pu; g.beginPath(); g.arc(0, 0, RR + 8.5 * K, 0, TAU); g.stroke(); g.globalAlpha = 1;
+    }
+    chalk(g, (h) => wcirc(h, 0, 0, RR, r.seed), late ? COL.coral : COL.chalk, 1.5 * K, late ? 0.55 : 0.3);
+    if (frac > 0.002) chalk(g, (h) => wcirc(h, 0, 0, RR, r.seed, -Math.PI / 2, frac * TAU), late ? COL.coral : r.col, 3.2 * K, 0.92);
+    const nh = Math.min(0.6, (0.4 / C) * TAU);
+    g.strokeStyle = COL.gold; g.lineWidth = 5.5 * K; g.lineCap = 'round'; g.globalAlpha = 0.95;
+    g.beginPath(); g.arc(0, 0, RR, -Math.PI / 2 - nh, -Math.PI / 2 + nh); g.stroke();
+    g.lineWidth = 2 * K; g.beginPath(); g.moveTo(0, -RR - 4 * K); g.lineTo(0, -RR - 8 * K); g.stroke(); g.globalAlpha = 1;
+    if (soon) {
+      g.setLineDash([3 * K, 4 * K]); g.lineDashOffset = -S.real * 24; g.strokeStyle = COL.chalk; g.lineWidth = 1.6 * K;
+      g.globalAlpha = 0.45 + 0.4 * Math.abs(Math.sin(S.real * 14)); g.beginPath(); g.arc(0, 0, RR + 5 * K, 0, TAU); g.stroke();
+      g.setLineDash([]); g.globalAlpha = 1;
+    }
+    if (tk !== null) {
+      const f = Math.min((tk - r.born) / C, 1 + 1.6 / C), a = -Math.PI / 2 + f * TAU;
+      const px = Math.cos(a) * RR, py = Math.sin(a) * RR, ts = (perfect ? 7 : 5.5) * K;
+      g.beginPath(); star4(g, px, py, ts);
+      if (soon) { g.strokeStyle = COL.chalk; g.lineWidth = 1.3 * K; g.stroke(); }
+      else { g.fillStyle = perfect ? COL.core : (lateTk ? COL.coral : COL.chalk); g.fill(); }
+    }
+    if (late) g.rotate(Math.sin(S.t * TAU * 6) * 4 * Math.PI / 180);
+    drawRocketBody(g, r.col, r.big, r.seed);
+    g.restore();
+  }
+  function drawCloud(g, c) {
+    const cx = X(c.x), cy = Y(c.y), a = 0.225 * U, b = 0.15 * U, r = rng((c.seed * 999) | 0);
+    g.strokeStyle = COL.sky; g.lineWidth = 1.3 * K; g.lineCap = 'round'; g.globalAlpha = 0.7; g.beginPath();
+    for (let i = 0; i < 26; i++) {
+      const x0 = cx + (r() * 2 - 1) * a * 0.9, ph = (S.real * 0.9 + r()) % 1;
+      const y0 = cy - b * 0.2 + ph * b * 1.1;
+      if (((x0 - cx) / a) ** 2 + ((y0 - cy) / b) ** 2 > 1) continue;
+      g.moveTo(x0, y0); g.lineTo(x0 - 3 * K, y0 + 7 * K);
+    }
+    g.stroke(); g.globalAlpha = 1;
+    chalk(g, (h) => {
+      for (let i = 0; i < 9; i++) { const t = i / 9 * TAU; const x = cx + Math.cos(t) * a * 0.75, y = cy + Math.sin(t) * b * 0.7 - b * 0.15; const rr = (0.32 + 0.1 * Math.sin(i * 2.1 + c.seed)) * b; h.moveTo(x + rr, y); h.arc(x, y, rr, 0, TAU * 0.92); }
+    }, COL.dust, 2.4 * K, 0.3);
+    g.fillStyle = COL.dust; g.globalAlpha = 0.08; g.beginPath(); g.ellipse(cx, cy, a, b, 0, 0, TAU); g.fill(); g.globalAlpha = 1;
+  }
+  function drawParts(g) {
+    g.lineCap = 'round';
+    for (const p of parts) {
+      const f = clamp(p.life / p.max, 0, 1);
+      if (p.ty === 'ln' || p.ty === 'spk') {
+        g.strokeStyle = p.col; g.globalAlpha = p.a * Math.pow(f, 0.7); g.lineWidth = p.w;
+        const k = p.len * (0.4 + 0.6 * f);
+        g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(p.x - p.vx * k, p.y - p.vy * k); g.stroke();
+      } else if (p.ty === 'dot') {
+        g.fillStyle = p.col; g.globalAlpha = p.a * f; g.fillRect(p.x - p.w / 2, p.y - p.w / 2, p.w, p.w);
+      } else if (p.ty === 'crk') {
+        if (Math.random() < 0.35) continue;
+        g.fillStyle = p.col; g.globalAlpha = p.a * f; g.beginPath(); g.arc(p.x, p.y, p.w, 0, TAU); g.fill();
+      } else if (p.ty === 'ring') {
+        const e = easeOut(1 - f), rr = p.r0 + (p.r1 - p.r0) * e;
+        g.strokeStyle = p.col; g.lineWidth = p.w * f; g.globalAlpha = p.a * f; g.beginPath(); g.arc(p.x, p.y, rr, 0, TAU); g.stroke();
+      } else if (p.ty === 'piece') {
+        g.save(); g.translate(p.x, p.y); g.rotate(p.rot); g.globalAlpha = Math.min(1, f * 2);
+        g.fillStyle = p.col; g.beginPath(); g.moveTo(-p.l / 2, -p.h / 2); g.lineTo(p.l / 2 - 2, -p.h / 2 + 1); g.lineTo(p.l / 2 + 1, p.h / 4); g.lineTo(p.l / 2 - 1, p.h / 2); g.lineTo(-p.l / 2, p.h / 2); g.closePath(); g.fill();
+        g.restore();
+      }
+    }
+    g.globalAlpha = 1;
+  }
+  function drawStreaks(g) {
+    for (const s of streaks) {
+      const e = easeOut(Math.min(1, s.t / s.dur)), hy = s.y0 + (s.y1 - s.y0) * e;
+      const fade = s.t > s.dur ? 1 - (s.t - s.dur) / 0.35 : 1;
+      chalk(g, (h) => { h.moveTo(s.x, s.y0); h.lineTo(s.x + Math.sin(s.t * 30) * 0.8, hy); }, COL.chalk, 2 * K, 0.85 * fade);
+      if (s.t < s.dur) { g.fillStyle = COL.core; g.beginPath(); g.arc(s.x, hy, 2.6 * K, 0, TAU); g.fill(); }
+    }
+  }
+  function drawTips(g) {
+    for (const tp of tips) {
+      if (tp.t < 0) continue;
+      const a = easeOut(Math.min(1, tp.t / 0.4)) * Math.PI / 2 * tp.dir, al = tp.t < 0.9 ? 1 : 1 - (tp.t - 0.9) / 0.6;
+      g.save(); g.translate(tp.x + tp.dir * a * 4 * K, tp.y + Math.abs(a) * 3 * K); g.rotate(a); g.globalAlpha = Math.max(0, al);
+      drawRocketBody(g, '#9aa39d', tp.big, tp.seed); g.restore(); g.globalAlpha = 1;
+    }
+  }
+  function drawPops(g) {
+    for (const p of pops) {
+      const e = Math.min(1, p.t / 0.25), sc = easeOutBack(e) * p.sz, al = p.t < 0.8 ? 1 : 1 - (p.t - 0.8) / 0.4;
+      g.save(); g.translate(clamp(p.x, 70 * K, W - 70 * K), p.y - easeOut(Math.min(1, p.t / 1.2)) * 30 * K); g.scale(sc, sc);
+      g.font = Math.round(17 * K) + 'px ' + FONT_BIG; const tw2 = g.measureText(p.txt).width;
+      g.fillStyle = COL.slate; g.globalAlpha = 0.55 * Math.max(0, al); g.beginPath(); g.ellipse(0, 0, tw2 / 2 + 10 * K, 13 * K, 0, 0, TAU); g.fill(); g.globalAlpha = 1;
+      ctext(g, p.txt, 0, 0, 17 * K, p.col, FONT_BIG, Math.max(0, al));
+      g.restore();
+    }
+  }
+  function drawSticks(g) {
+    for (let i = 0; i < 3; i++) {
+      if (!sticks[i]) continue;
+      const s = stickRect(i), e = stickFx[i] > 0 ? easeOutBack(1 - stickFx[i]) : 1;
+      g.save(); g.translate(s.x, s.y); g.rotate((i - 1) * 0.04); g.scale(e, e);
+      g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(2, s.h * 0.55, s.l / 2, s.h * 0.35, 0, 0, TAU); g.fill();
+      g.fillStyle = STICK_COLS[i]; g.beginPath(); g.moveTo(-s.l / 2 + s.h / 2, -s.h / 2); g.lineTo(s.l / 2 - s.h / 2, -s.h / 2); g.arc(s.l / 2 - s.h / 2, 0, s.h / 2, -Math.PI / 2, Math.PI / 2); g.lineTo(-s.l / 2 + s.h / 2, s.h / 2); g.arc(-s.l / 2 + s.h / 2, 0, s.h / 2, Math.PI / 2, Math.PI * 1.5); g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(-s.l / 2 + s.h / 2, -s.h / 2 + 1, s.l - s.h, s.h * 0.22);
+      g.fillStyle = 'rgba(0,0,0,0.14)'; g.fillRect(-s.l / 2 + s.h / 2, s.h * 0.15, s.l - s.h, s.h * 0.3);
+      g.restore();
+    }
+  }
+  function drawHUD(g) {
+    const cx = W / 2, y = safeT + 30 * K;
+    const bump = 1 + 0.14 * easeOut(S.scoreBump);
+    g.save(); g.translate(cx, y); g.scale(bump, bump);
+    jtext(g, fmt(S.score), 0, 0, 36 * K, COL.chalk, FONT_BIG, 1, W * 0.5);
+    g.restore();
+    g.font = Math.round(36 * K) + 'px ' + FONT_BIG;
+    const sw = g.measureText(fmt(S.score)).width;
+    ctext(g, 'best ' + fmt(Math.max(S.best, S.mode === 'over' ? 0 : S.best)), cx, y + 27 * K, 13 * K, COL.chalk, FONT_UI, 0.6);
+    if (S.streak > 0) {
+      const mb = 1 + 0.3 * easeOut(S.multBump);
+      g.save(); g.translate(cx + sw / 2 + 14 * K, y + 2 * K); g.scale(mb, mb);
+      ctext(g, fmtMult(multOf(S.streak)), 0, 0, 19 * K, COL.gold, FONT_BIG, 1, 'left');
+      g.restore();
+    }
+    // spool meter
+    const mw = 62 * K, mh = 9 * K, mx = W - FW - 12 * K - mw, my = safeT + 24 * K;
+    const unlit = endS() - sparkS, left = clamp(1 - unlit / SPOOL, 0, 1);
+    const flash = S.spoolFlash > 0 && Math.sin(S.real * 30) > 0;
+    g.fillStyle = flash ? COL.coral : COL.mint; g.globalAlpha = 0.85; g.fillRect(mx + 2, my + 2, (mw - 4) * left, mh - 4); g.globalAlpha = 1;
+    chalk(g, (h) => { h.moveTo(mx, my); h.lineTo(mx + mw, my + 0.5); h.lineTo(mx + mw - 0.5, my + mh); h.lineTo(mx, my + mh - 0.5); h.closePath(); }, flash ? COL.coral : COL.chalk, 1.4 * K, 0.85);
+    ctext(g, 'spool', mx + mw / 2, my + mh + 11 * K, 11 * K, COL.chalk, FONT_UI, 0.55);
+  }
+  // cards: a wiped patch of slate (opaque, on the main canvas) with chalk on top (on the chalk layer)
+  function cardBox() {
+    if (S.mode === 'over') {
+      if (S.overT < 0.15) return null;
+      const w = Math.min(W * 0.84, 340 * K), h = 330 * K;
+      return { x: (W - w) / 2, y: Math.max(FY, H * 0.46 - h / 2), w, h, a: easeOutBack(clamp((S.overT - 0.15) / 0.4, 0, 1)), seed: 77 };
+    }
+    if (S.mode === 'paused') { const w = Math.min(W * 0.7, 280 * K), h = 140 * K; return { x: (W - w) / 2, y: H * 0.42 - h / 2, w, h, a: 1, seed: 31 }; }
+    return null;
+  }
+  function withCard(g, b, fn) { g.save(); g.translate(W / 2, b.y + b.h / 2); g.scale(b.a, b.a); g.translate(-W / 2, -(b.y + b.h / 2)); fn(); g.restore(); }
+  function cardFill(g, b) {
+    const rr = (x, y, w, h, r) => { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); };
+    g.fillStyle = COL.card;
+    g.globalAlpha = 0.45; rr(b.x - 10 * K, b.y - 8 * K, b.w + 20 * K, b.h + 16 * K, 26 * K); g.fill();
+    g.globalAlpha = 1; rr(b.x - 2, b.y - 2, b.w + 4, b.h + 4, 16 * K); g.fill();
+  }
+  function cardBorder(g, b) {
+    const r = rng(b.seed), x = b.x, y = b.y, w = b.w, h = b.h;
+    chalk(g, (hh) => {
+      const j = () => (r() - 0.5) * 3;
+      hh.moveTo(x + 6 + j(), y + j()); hh.lineTo(x + w + j(), y + 2 + j()); hh.lineTo(x + w - 2 + j(), y + h + j()); hh.lineTo(x + j(), y + h - 2 + j()); hh.lineTo(x + 2 + j(), y + 8 + j());
+    }, COL.chalk, 2 * K, 0.85);
+    chalk(g, (hh) => { hh.moveTo(x + 14, y - 5); hh.lineTo(x + w * 0.4, y - 4); }, COL.chalk, 1.2 * K, 0.45);
+  }
+  function drawOverCard(g, b) {
+    const x = b.x, y = b.y, w = b.w, h = b.h;
+    cardBorder(g, b);
+    jtext(g, "Show's over", W / 2, y + 40 * K, 30 * K, COL.chalk, FONT_BIG, 1, w * 0.7);
+    jtext(g, fmt(S.score), W / 2, y + 98 * K, 54 * K, COL.gold, FONT_BIG, 1, w * 0.8);
+    ctext(g, S.newBest ? 'New best!' : 'best ' + fmt(S.best), W / 2, y + 140 * K, 16 * K, S.newBest ? COL.gold : COL.chalk, FONT_UI, S.newBest ? 1 : 0.7);
+    if (S.newBest) {
+      const sx = x + w - 20 * K, sy = y + 4 * K, rr = 24 * K, rot = Math.sin(S.real * 2) * 0.15;
+      g.save(); g.translate(sx, sy); g.rotate(rot);
+      chalk(g, (hh) => { for (let i = 0; i <= 10; i++) { const ang = -Math.PI / 2 + i * Math.PI / 5, rad = i % 2 ? rr * 0.45 : rr; i ? hh.lineTo(Math.cos(ang) * rad, Math.sin(ang) * rad) : hh.moveTo(Math.cos(ang) * rad, Math.sin(ang) * rad); } }, COL.gold, 3 * K, 1);
+      g.restore();
+    }
+    const mins = Math.floor(S.t / 60), secs = Math.floor(S.t % 60);
+    const stats = [['rockets lit', fmt(S.lit)], ['perfects', fmt(S.perfects)], ['longest streak', fmt(S.longest)], ['show length', mins + ':' + (secs < 10 ? '0' : '') + secs]];
+    for (let i = 0; i < 4; i++) {
+      const sx = x + w * (i % 2 ? 0.72 : 0.28), sy = y + (180 + Math.floor(i / 2) * 52) * K;
+      jtext(g, stats[i][1], sx, sy, 22 * K, COL.chalk, FONT_BIG);
+      ctext(g, stats[i][0], sx, sy + 20 * K, 12 * K, COL.chalk, FONT_UI, 0.6);
+    }
+    if (S.overT > 0.6) ctext(g, 'Tap to draw again', W / 2, y + h - 30 * K, 18 * K, COL.mint, FONT_UI, 0.75 + 0.25 * Math.sin(S.real * 4));
+  }
+  function drawPauseCard(g, b) {
+    cardBorder(g, b);
+    jtext(g, 'Paused', W / 2, b.y + 48 * K, 32 * K, COL.chalk, FONT_BIG);
+    ctext(g, 'Tap to carry on', W / 2, b.y + 98 * K, 17 * K, COL.mint, FONT_UI, 0.75 + 0.25 * Math.sin(S.real * 4));
+  }
+  // title: the word, a fuse underline with a running spark, then a burst
+  let titleSpark = null;
+  function titleFusePts() {
+    const fs = Math.min(84, W * 0.2), cy = H * 0.34 + fs * 0.62, pts = [];
+    for (let i = 0; i <= 80; i++) { const t = i / 80; pts.push({ x: W * (0.14 + 0.72 * t), y: cy + Math.sin(t * TAU * 2.2) * fs * 0.11 * (0.4 + t) }); }
+    return pts;
+  }
+  function drawTitle(g) {
+    const t = S.titleT, fs = Math.min(84, W * 0.2), cy = H * 0.34;
+    const reveal = clamp(t / 0.9, 0, 1);
+    g.save(); g.beginPath(); g.rect(0, cy - fs, reveal >= 1 ? W : W * (0.1 + 0.9 * reveal), fs * 2); g.clip();
+    jtext(g, 'Wickwalk', W / 2, cy, fs, COL.mint, FONT_BIG, 1, W * 0.84);
+    g.restore();
+    const pts = titleFusePts(), cyc = 4.6, ph = ((t - 1) % cyc + cyc) % cyc;
+    const run = t < 1 ? 0 : clamp(ph / 2.6, 0, 1), k = Math.floor(run * (pts.length - 1));
+    titleSpark = null;
+    if (t >= 1 && run < 1) titleSpark = pts[k];
+    const unl = pts.slice(k);
+    if (unl.length > 1 && run < 1) drawCord(g, unl, COL.cord, COL.cordTick);
+    g.strokeStyle = COL.ash; g.lineWidth = 2.2 * K; g.globalAlpha = 0.7; g.beginPath();
+    for (let i = 0; i <= k && i < pts.length; i++) i ? g.lineTo(pts[i].x, pts[i].y) : g.moveTo(pts[i].x, pts[i].y);
+    g.stroke(); g.globalAlpha = 1;
+    const loop = Math.floor((t - 1) / cyc);
+    if (t >= 1 && run >= 1 && S.titleBurst !== loop) {
+      S.titleBurst = loop;
+      burstAt(W * 0.36, cy - fs * 1.15, COL.mint, 'Perfect', false);
+      burstAt(W * 0.66, cy - fs * 1.35, COL.pink, 'Good', false);
+    }
+    ctext(g, 'Draw the fuse. Wiggle to wait.', W / 2, cy + fs * 1.25, 17 * K, COL.chalk, FONT_UI, 0.85);
+    ctext(g, 'Light every rocket as its ring closes.', W / 2, cy + fs * 1.25 + 26 * K, 15 * K, COL.chalk, FONT_UI, 0.6);
+    // a sample rocket with its cue ring
+    const rx = W / 2, ry = H * 0.62, fake = { x: (rx - FX) / U, y: (ry - FY) / U, rr: 0.065, lr: 0.045, born: 0, T: 4, col: COL.pink, big: false, seed: 3, tick: null, pop: 1 };
+    const saveT = S.t; S.t = (t % 4.5); fake.tick = 4 + Math.sin(t * 1.3) * 0.3;
+    drawRocket(g, fake, false); S.t = saveT;
+    jtext(g, 'Tap to start', W / 2, H * 0.74, 22 * K, COL.mint, FONT_BIG, 0.78 + 0.22 * Math.sin(S.real * 3.5));
+    if (S.best > 0) ctext(g, 'best ' + fmt(S.best), W / 2, H * 0.74 + 32 * K, 14 * K, COL.chalk, FONT_UI, 0.6);
+  }
+  function drawHints(g) {
+    if (AP.on) return;
+    const y = FY + 14 * K;
+    const plate = (lines) => {
+      g.font = Math.round(15 * K) + 'px ' + FONT_UI;
+      const w = g.measureText('Drag from the glowing end of the fuse').width + 28 * K, h = (lines * 19 + 12) * K;
+      g.fillStyle = COL.card; g.globalAlpha = 0.92; g.beginPath();
+      if (g.roundRect) g.roundRect(W / 2 - w / 2, y - 14 * K, w, h, 12 * K); else g.rect(W / 2 - w / 2, y - 14 * K, w, h);
+      g.fill(); g.globalAlpha = 1;
+    };
+    if (!S.drew) {
+      plate(1);
+      const e = endPt(), ph = (S.real % 1.8) / 1.8;
+      const gx = X(e.x) + Math.sin(ph * TAU * 1.5) * 26 * K, gy = Y(e.y) - ph * 70 * K;
+      g.fillStyle = COL.chalk; g.globalAlpha = 0.35 * (1 - ph); g.beginPath(); g.arc(gx, gy, 13 * K, 0, TAU); g.fill(); g.globalAlpha = 1;
+      ctext(g, 'Drag from the glowing end of the fuse', W / 2, y, 15 * K, COL.chalk, FONT_UI, 0.8);
+    } else if (S.tutorial && S.t < 45) {
+      plate(2);
+      ctext(g, 'Wiggle to wait, go straight to hurry.', W / 2, y, 14 * K, COL.chalk, FONT_UI, 0.7);
+      ctext(g, 'Land the spark tick in the gold notch.', W / 2, y + 19 * K, 14 * K, COL.gold, FONT_UI, 0.7);
+    }
+  }
+  function drawGame(g) {
+    drawLantern(g);
+    for (const e of erased) {
+      const al = 1 - e.t / 0.25;
+      g.strokeStyle = COL.dust; g.lineWidth = 9 * K; g.globalAlpha = 0.18 * al; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); e.pts.forEach((p, i) => (i ? g.lineTo(X(p.x), Y(p.y)) : g.moveTo(X(p.x), Y(p.y)))); g.stroke();
+      g.strokeStyle = COL.cord; g.lineWidth = 1.5 * K; g.globalAlpha = 0.6 * al; g.stroke(); g.globalAlpha = 1;
+    }
+    drawFuse(g);
+    // twin links
+    g.setLineDash([2 * K, 6 * K]); g.strokeStyle = COL.chalk; g.lineWidth = 1.6 * K; g.globalAlpha = 0.55; g.beginPath();
+    for (const r of rockets) if (r.twin && r.twin.st === 'wait' && r.id < r.twin.id) { g.moveTo(X(r.x), Y(r.y)); g.lineTo(X(r.twin.x), Y(r.twin.y)); }
+    g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+    const drawing = !!drag || (AP.on && AP.qi < AP.q.length);
+    for (const r of rockets) drawRocket(g, r, drawing);
+    drawTips(g);
+    drawStreaks(g);
+    // fuse end: a glowing white ring to grab
+    if (S.mode === 'play') {
+      const e = endPt(), ex = X(e.x), ey = Y(e.y);
+      if (!S.stuck || sparkI < fuse.length - 1) {
+        const pu = 0.5 + 0.5 * Math.sin(S.real * 5);
+        g.strokeStyle = COL.chalk; g.lineWidth = 1.6 * K; g.globalAlpha = (S.drew ? 0.35 : 0.6) + 0.3 * pu;
+        g.beginPath(); g.arc(ex, ey, (7 + 2 * pu) * K, 0, TAU); g.stroke(); g.globalAlpha = 1;
+      }
+      if (S.endPulse > 0) { g.strokeStyle = COL.chalk; g.lineWidth = 2.5 * K; g.globalAlpha = S.endPulse; g.beginPath(); g.arc(ex, ey, (8 + (1 - S.endPulse) * 26) * K, 0, TAU); g.stroke(); g.globalAlpha = 1; }
+      if (S.stuck && S.smoulder > 0) {
+        const sp = sparkPos(), f = clamp(S.smoulder / 1.5, 0, 1);
+        g.strokeStyle = COL.coral; g.globalAlpha = 0.3; g.lineWidth = 3 * K; g.beginPath(); g.arc(X(sp.x), Y(sp.y), 14 * K, 0, TAU); g.stroke();
+        g.globalAlpha = 1; g.beginPath(); g.arc(X(sp.x), Y(sp.y), 14 * K, -Math.PI / 2, -Math.PI / 2 + f * TAU); g.stroke();
+      }
+      if (S.blockX && S.real - S.blockX.t < 0.5) {
+        const bxp = X(S.blockX.x), byp = Y(S.blockX.y), s = 8 * K;
+        chalk(g, (h) => { h.moveTo(bxp - s, byp - s); h.lineTo(bxp + s, byp + s); h.moveTo(bxp + s, byp - s); h.lineTo(bxp - s, byp + s); }, COL.coral, 3 * K, 1 - (S.real - S.blockX.t) / 0.5);
+      }
+    }
+    for (const c of clouds) drawCloud(g, c);
+    drawParts(g);
+    drawPops(g);
+    if (S.mode === 'play') drawHints(g);
+  }
+
+  function render() {
+    const g = ctx;
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+    g.drawImage(bg, 0, 0, W, H);
+    lx.clearRect(0, 0, W, H);
+    const sh = S.shake > 0 ? 3 : 0, ox = sh ? (Math.random() - 0.5) * 2 * sh : 0, oy = sh ? (Math.random() - 0.5) * 2 * sh : 0;
+    lx.save(); lx.translate(ox, oy);
+    if (S.mode === 'title') { drawTitle(lx); drawParts(lx); }
+    else drawGame(lx);
+    lx.restore();
+    if (S.mode !== 'title') { drawHUD(lx); }
+    drawSticks(lx);
+    knock(lx, patL, 0.35);
+    g.drawImage(layer, 0, 0, W, H);
+    // light (not chalk): spark glow, lantern glow, demo finger
+    let sp = null;
+    if (S.mode === 'play') { const p = sparkPos(); sp = { x: X(p.x) + ox, y: Y(p.y) + oy }; }
+    else if (S.mode === 'title' && titleSpark) sp = titleSpark;
+    if (sp) {
+      const fl = 1 + 0.18 * Math.sin(S.real * 41) + 0.1 * Math.random(), R = 14 * K * fl;
+      const gr = g.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, R);
+      gr.addColorStop(0, 'rgba(255,246,200,0.55)'); gr.addColorStop(0.4, 'rgba(255,201,90,0.25)'); gr.addColorStop(1, 'rgba(255,156,74,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(sp.x, sp.y, R, 0, TAU); g.fill();
+      g.fillStyle = COL.core; g.beginPath(); g.arc(sp.x, sp.y, 2.6 * K * fl, 0, TAU); g.fill();
+    }
+    if (S.mode === 'play' || S.mode === 'paused') {
+      const lxp = X(0.5), lyp = Y(FH - 0.06), fl = 0.8 + 0.2 * Math.sin(S.real * 7.3) * Math.sin(S.real * 3.1);
+      const gr = g.createRadialGradient(lxp, lyp, 0, lxp, lyp, 34 * K);
+      gr.addColorStop(0, 'rgba(247,223,110,' + (0.22 * fl).toFixed(3) + ')'); gr.addColorStop(1, 'rgba(247,223,110,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(lxp, lyp, 34 * K, 0, TAU); g.fill();
+    }
+    const drawingAP = AP.on && S.mode === 'play' && AP.qi < AP.q.length;
+    AP.fingerA = clamp(AP.fingerA + (drawingAP ? 1 / 60 * 6 : -1 / 60 * 3), 0, 1);
+    if (AP.fingerA > 0 && S.mode === 'play') {
+      const fx = X(AP.fx), fy = Y(AP.fy);
+      g.fillStyle = 'rgba(242,239,228,' + (0.22 * AP.fingerA).toFixed(3) + ')'; g.beginPath(); g.arc(fx, fy, 17 * K, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(242,239,228,' + (0.3 * AP.fingerA).toFixed(3) + ')'; g.beginPath(); g.arc(fx, fy, 9 * K, 0, TAU); g.fill();
+    }
+    const cb = cardBox();
+    if (cb) {
+      withCard(g, cb, () => cardFill(g, cb));
+      lx.clearRect(0, 0, W, H);
+      withCard(lx, cb, () => (S.mode === 'over' ? drawOverCard(lx, cb) : drawPauseCard(lx, cb)));
+      knock(lx, patL, 0.3);
+      g.drawImage(layer, 0, 0, W, H);
+    }
+  }
+
+  let ctx = null;
+  ctx = kit.fitCanvas(cv, layout);
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, Math.max(0, (now - last) / 1000)); last = now;
+    update(dt);
+    if (AP.on && !AP.warp2 && S.mode === 'play' && performance.now() - AP.onAt > 4500 && S.t < 150) { AP.warp2 = true; warpTo(160); }
+    render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  window.__game = {
+    state: () => ({ mode: S.mode, score: S.score, best: S.best, lives: S.lives, t: Math.round(S.t * 10) / 10, lit: S.lit, perfects: S.perfects, streak: S.streak, longest: S.longest, rockets: rockets.length }),
+    demo: (on) => {
+      AP.on = !!on; AP.q = []; AP.qi = 0; AP.check = 0;
+      if (AP.on) {
+        AP.onAt = performance.now(); AP.warp2 = false;
+        if (S.mode === 'title') startGame();
+        if (S.mode === 'play' && S.t < 30) warpTo(88);
+      }
+    },
+    sim: (sec) => { const end = S.t + sec; S.warp = true; let n = 0; while (S.mode === 'play' && S.t < end && n++ < 200000) update(1 / 60); S.warp = false; return window.__game.state(); },
+    start: () => startGame(),
+    dbg: () => JSON.stringify(Object.assign({ unlit: +(endS() - sparkS).toFixed(3), end: [+endPt().x.toFixed(3), +endPt().y.toFixed(3)], n: fuse.length, spark: +sparkS.toFixed(3), FH: +FH.toFixed(4), U, FX, FY }, DBG))
+  };
+})();
+</script>
+</body>
+</html>
