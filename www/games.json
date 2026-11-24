@@ -120,5 +120,15 @@
     "added": "2026-11-21",
     "accent": "#66e0b4",
     "status": "built"
+  },
+  {
+    "slug": "whirlwhelk",
+    "name": "Whirlwhelk",
+    "tagline": "Spin the rings. Shells sink inward. Match three.",
+    "genre": "radial-gravity shell match puzzle",
+    "bundleId": "com.thomaslucido.whirlwhelk",
+    "added": "2026-11-23",
+    "accent": "#cfa24a",
+    "status": "built"
   }
 ]

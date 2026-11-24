@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Whirlwhelk</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#15110f;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;font-family:"Bodoni 72",Didot,Georgia,serif}
+  canvas{display:block;touch-action:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../../shared/game-kit.js"></script>
+<script>
+(function () {
+  'use strict';
+  const kit = GameKit.init({ slug: 'whirlwhelk', backColor: '#cfa24a' });
+  const cv = document.getElementById('c');
+  const SERIF = '"Bodoni 72", Didot, Georgia, "Times New Roman", serif';
+  const TAU = Math.PI * 2, NOTCH = Math.PI / 4;
+
+  // ---------- palette ----------
+  const C = {
+    black: '#15110f', refl: '#2c221d', gold: '#cfa24a', goldHi: '#f0d48a', goldLo: '#8c6a2a',
+    verm: '#a3301f', vermHi: '#c9503a', vermLo: '#5e1a12', well: '#1d1714', ivory: '#e9dfcf', warn: '#c9503a'
+  };
+  // shell types
+  const SCALLOP = 0, SNAIL = 1, STAR = 2, MUSSEL = 3, URCHIN = 4, SAND = 5, PEARL = 6, STONE = 7;
+  const NR = 4, NS = 8;
+
+  // ---------- layout ----------
+  let W = 0, H = 0, ctx = null, CX = 0, CY = 0, R = 100, HUB = 16, RW = 21, SH = 8.5;
+  let safeTop = 0, prevTop = { x: 0, y: 0 }, prevBot = { x: 0, y: 0 };
+  let bg = null;
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px)';
+  document.body.appendChild(probe);
+
+  function layout() {
+    safeTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    CX = W / 2; CY = H * 0.52; R = Math.min(W * 0.46, H * 0.29);
+    HUB = 0.16 * R; RW = 0.21 * R; SH = 0.085 * R;
+    let py = Math.min(H * 0.18, CY - 1.3 * R - SH * 1.4);
+    if (py - SH * 1.55 < safeTop + 88) prevTop = { x: CX + 0.42 * R, y: CY - 1.18 * R }; else prevTop = { x: CX, y: py };
+    let by = Math.max(CY + 1.3 * R + SH * 1.4, 0);
+    if (by > H * 0.84 - SH * 2) prevBot = { x: CX - 0.42 * R, y: CY + 1.18 * R }; else prevBot = { x: CX, y: by };
+    buildBg();
+  }
+  ctx = kit.fitCanvas(cv, (s) => { W = s.w; H = s.h; layout(); });
+
+  function rnd(seed) { return function () { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+  // static layer: lacquer, reflection, nashiji flecks, the tray rim and the well
+  function buildBg() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    bg = document.createElement('canvas');
+    bg.width = Math.max(1, Math.round(W * dpr)); bg.height = Math.max(1, Math.round(H * dpr));
+    const b = bg.getContext('2d'); b.setTransform(dpr, 0, 0, dpr, 0, 0);
+    b.fillStyle = C.black; b.fillRect(0, 0, W, H);
+    // one broad soft lacquer reflection, diagonal
+    const g = b.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, 'rgba(44,34,29,0)'); g.addColorStop(0.28, 'rgba(44,34,29,0)');
+    g.addColorStop(0.42, 'rgba(44,34,29,0.95)'); g.addColorStop(0.52, 'rgba(44,34,29,0.7)');
+    g.addColorStop(0.66, 'rgba(44,34,29,0)'); g.addColorStop(1, 'rgba(44,34,29,0)');
+    b.fillStyle = g; b.fillRect(0, 0, W, H);
+    const r = rnd(77);
+    b.fillStyle = C.gold;
+    const n = Math.round(W * H / 1700);
+    for (let i = 0; i < n; i++) { b.globalAlpha = 0.12 + r() * 0.28; const s = 0.8 + r() * 1.3; b.fillRect(r() * W, r() * H, s, s); }
+    b.globalAlpha = 1;
+    // soft shadow under the tray
+    const sh = b.createRadialGradient(CX, CY + R * 0.04, R * 0.9, CX, CY + R * 0.04, R * 1.3);
+    sh.addColorStop(0, 'rgba(0,0,0,0.55)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
+    b.fillStyle = sh; b.beginPath(); b.arc(CX, CY + R * 0.04, R * 1.3, 0, TAU); b.fill();
+    // vermilion rim
+    b.lineWidth = 0.06 * R; b.strokeStyle = C.verm; b.beginPath(); b.arc(CX, CY, R * 1.03, 0, TAU); b.stroke();
+    b.lineCap = 'round';
+    b.lineWidth = 0.022 * R; b.strokeStyle = C.vermHi; b.globalAlpha = 0.85;
+    b.beginPath(); b.arc(CX, CY, R * 1.043, Math.PI * 1.02, Math.PI * 1.48); b.stroke();
+    b.globalAlpha = 0.45; b.beginPath(); b.arc(CX, CY, R * 1.043, Math.PI * 0.9, Math.PI * 1.62); b.stroke();
+    b.globalAlpha = 0.9; b.strokeStyle = C.vermLo; b.lineWidth = 0.024 * R;
+    b.beginPath(); b.arc(CX, CY, R * 1.016, Math.PI * 0.02, Math.PI * 0.48); b.stroke();
+    b.globalAlpha = 1; b.lineCap = 'butt';
+    b.strokeStyle = C.gold; b.lineWidth = 1.2;
+    b.beginPath(); b.arc(CX, CY, R * 1.06, 0, TAU); b.stroke();
+    // the well
+    b.fillStyle = C.well; b.beginPath(); b.arc(CX, CY, R, 0, TAU); b.fill();
+    const wg = b.createRadialGradient(CX, CY, R * 0.2, CX, CY, R);
+    wg.addColorStop(0, 'rgba(0,0,0,0.35)'); wg.addColorStop(0.7, 'rgba(0,0,0,0)'); wg.addColorStop(1, 'rgba(0,0,0,0.25)');
+    b.fillStyle = wg; b.beginPath(); b.arc(CX, CY, R, 0, TAU); b.fill();
+    b.fillStyle = C.gold;
+    for (let i = 0; i < 160; i++) { const a = r() * TAU, d = Math.sqrt(r()) * R * 0.98; b.globalAlpha = 0.1 + r() * 0.25; const s = 0.7 + r() * 1.1; b.fillRect(CX + Math.cos(a) * d, CY + Math.sin(a) * d, s, s); }
+    b.globalAlpha = 1;
+    b.strokeStyle = C.gold; b.lineWidth = 1.5; b.beginPath(); b.arc(CX, CY, R, 0, TAU); b.stroke();
+    // spokes: dotted gold hairlines
+    b.save(); b.setLineDash([1.4, 4.2]); b.lineCap = 'round'; b.strokeStyle = 'rgba(207,162,74,0.4)'; b.lineWidth = 1.1;
+    for (let s = 0; s < NS; s++) {
+      const a = s * NOTCH; b.beginPath();
+      b.moveTo(CX + Math.sin(a) * HUB, CY - Math.cos(a) * HUB); b.lineTo(CX + Math.sin(a) * R, CY - Math.cos(a) * R); b.stroke();
+    }
+    b.restore();
+  }
+
+  // ---------- board logic (pure, shared by the game and the autopilot) ----------
+  const grid = () => { const g = []; for (let k = 0; k < NR; k++) g.push(new Array(NS).fill(null)); return g; };
+  const count = (g, s) => { let n = 0; for (let k = 0; k < NR; k++) if (g[k][s]) n++; return n; };
+  const maxH = (g) => { let m = 0; for (let s = 0; s < NS; s++) m = Math.max(m, count(g, s)); return m; };
+  function settle(g) { // gravity points inward: compact every spoke toward the hub
+    let moved = 0;
+    for (let s = 0; s < NS; s++) {
+      const list = []; for (let k = 0; k < NR; k++) if (g[k][s]) list.push(g[k][s]);
+      for (let k = 0; k < NR; k++) { const c = list[k] || null; if (c && g[k][s] !== c) moved++; g[k][s] = c; }
+    }
+    return moved;
+  }
+  function rotate(g, k, n) {
+    n = ((Math.round(n) % NS) + NS) % NS; if (!n) return;
+    const row = g[k].slice(); for (let s = 0; s < NS; s++) g[k][(s + n) % NS] = row[s];
+  }
+  function lineRuns(cells, cyclic, out, meta) { // cells: [{c,k,s}]
+    const n = cells.length, found = [];
+    for (let T = 0; T <= 6; T++) {
+      const q = (i) => { const c = cells[i].c; return !!c && c.t !== STONE && (T === 6 ? c.t === PEARL : (c.t === T || c.t === PEARL)); };
+      const take = (idx) => { if (idx.length < 3) return; if (T < 6 && !idx.some((i) => cells[i].c.t === T)) return; found.push(idx); };
+      let all = true; for (let i = 0; i < n; i++) if (!q(i)) { all = false; break; }
+      if (all) { take([...Array(n).keys()]); continue; }
+      let start = 0;
+      if (cyclic) { while (q(start)) start++; }
+      let cur = [];
+      for (let j = 0; j <= n; j++) {
+        if (!cyclic && j === n) { take(cur); break; }
+        const i = cyclic ? (start + j) % n : j;
+        if (j < n && q(i)) cur.push(i); else { take(cur); cur = []; }
+        if (cyclic && j === n) break;
+      }
+    }
+    // drop runs that sit inside another run (pearl-only stretches inside a typed run)
+    for (const r of found) {
+      const inside = found.some((o) => o !== r && o.length > r.length && r.every((i) => o.includes(i)));
+      if (!inside) out.push({ dir: meta.dir, line: meta.line, len: r.length, pos: r.map((i) => [cells[i].k, cells[i].s]) });
+    }
+  }
+  function findRuns(g) {
+    const out = [];
+    for (let s = 0; s < NS; s++) { const cells = []; for (let k = 0; k < NR; k++) cells.push({ c: g[k][s], k, s }); lineRuns(cells, false, out, { dir: 'radial', line: s }); }
+    for (let k = 0; k < NR; k++) { const cells = []; for (let s = 0; s < NS; s++) cells.push({ c: g[k][s], k, s }); lineRuns(cells, true, out, { dir: 'ring', line: k }); }
+    return out;
+  }
+  const runPoints = (L) => L <= 3 ? 30 : L === 4 ? 60 : L === 5 ? 100 : 150 + 30 * (L - 6);
+  function applyClear(g, runs, c, make) {
+    const key = (k, s) => k * NS + s, cleared = new Map(), pearlAt = new Map();
+    let pts = 0, deep = 0, full = 0;
+    for (const r of runs) {
+      for (const [k, s] of r.pos) cleared.set(key(k, s), [k, s]);
+      pts += runPoints(r.len) * c;
+      if (r.dir === 'radial' && r.len >= 4) { deep++; pts += 100 * c; }
+      if (r.dir === 'ring' && r.len >= 8) { full++; pts += 500 * c; }
+      if (r.len >= 4) {
+        let p = r.pos[0];
+        if (r.dir === 'radial') { for (const q of r.pos) if (q[0] < p[0]) p = q; } else p = r.pos[Math.floor(r.len / 2)];
+        pearlAt.set(key(p[0], p[1]), p);
+      }
+    }
+    const crumble = new Map();
+    for (const [k, s] of cleared.values()) {
+      for (const [kk, ss] of [[k - 1, s], [k + 1, s], [k, (s + 1) % NS], [k, (s + NS - 1) % NS]]) {
+        if (kk < 0 || kk >= NR) continue; const n = g[kk][ss];
+        if (n && n.t === STONE && !cleared.has(key(kk, ss))) crumble.set(key(kk, ss), [kk, ss]);
+      }
+    }
+    pts += 20 * crumble.size;
+    const removed = [], crumbled = [], pearls = [];
+    for (const [k, s] of cleared.values()) { removed.push({ cell: g[k][s], k, s }); g[k][s] = null; }
+    for (const [k, s] of crumble.values()) { crumbled.push({ cell: g[k][s], k, s }); g[k][s] = null; }
+    for (const [k, s] of pearlAt.values()) { const p = make(PEARL); g[k][s] = p; pearls.push({ cell: p, k, s }); }
+    return { pts, deep, full, removed, crumbled, pearls, n: cleared.size };
+  }
+  const simMake = (t) => ({ t });
+  function simCascade(g) {
+    let pts = 0, cl = 0, c = 0; settle(g);
+    for (;;) { const runs = findRuns(g); if (!runs.length) break; c++; const o = applyClear(g, runs, c, simMake); pts += o.pts; cl += o.n + o.crumbled.length; settle(g); if (c > 20) break; }
+    return { pts, cl, chain: c };
+  }
+  const clone = (g) => g.map((row) => row.map((c) => (c ? { t: c.t } : null)));
+
+  // ---------- game state ----------
+  const S = { mode: 'title', t: 0, play: 0, score: 0, shown: 0, pulse: 0, best: kit.best(), spills: 0, sunk: 0, longest: 0, deeps: 0, over: 0, newBest: false, idle: 0 };
+  let G = grid(), uid = 1;
+  let ringOff = [0, 0, 0, 0], wob = [0, 0, 0, 0], lastNotch = [0, 0, 0, 0];
+  let grab = null, pend = null, anim = null, res = { active: false };
+  let arrT = 0, holdWait = 0, nextTop = 0, nextBot = 0, nextMouth = 0, picks = [], twoMouths = false, mouthCurl = [0, 0], mouthOpen = 0;
+  let eddyT = 0, eddy = null, miles = {};
+  let flyers = [], specks = [], chips = [], ripples = [], pops = [], spillers = [], crestFx = [], crestGain = [0, 0, 0];
+  let caption = { text: '', t: 0, dur: 1, col: C.gold };
+  let hubFlare = 0, shake = 0, whirl = 0, demo = false, demoT = 0, finger = null, mute = false, sinkSnd = 0;
+  const P = { x: 0, y: 0, down: false };
+
+  const snd = (f, d, ty, v) => { if (!mute) GameKit.sound(f, d, ty, v); };
+  const buzz = (s) => { if (!mute) kit.buzz(s); };
+  const newCell = (t) => ({ t, id: uid++, vr: null, sq: 0, pulse: -1, ph: Math.random() * TAU });
+  const TUNE = { aStart: 2.6, knee: 15, a0: 1.8, aSlope: 0.003, aFloor: 1.1, t5: 45, t6: 180, tB: 90, start: 12, demoEvery: 0.55 };
+  const arrivalEvery = (t) => TUNE.knee && t < TUNE.knee ? TUNE.aStart + (TUNE.a0 - TUNE.aStart) * t / TUNE.knee : Math.max(TUNE.aFloor, TUNE.a0 - TUNE.aSlope * (t - (TUNE.knee || 0)));
+  const typesAt = (t) => (t < TUNE.t5 ? 4 : t < TUNE.t6 ? 5 : 6);
+
+  function pickShell() {
+    const t = S.play;
+    const two = picks.length >= 2 && picks[picks.length - 1] === picks[picks.length - 2] ? picks[picks.length - 1] : -1;
+    let x;
+    if (t >= TUNE.tB && two !== STONE && Math.random() < Math.min(0.2, 0.1 + 0.0005 * (t - TUNE.tB))) x = STONE;
+    else { const n = typesAt(t), opts = []; for (let i = 0; i < n; i++) if (i !== two) opts.push(i); x = opts[Math.floor(Math.random() * opts.length)]; }
+    picks.push(x); if (picks.length > 4) picks.shift();
+    return x;
+  }
+
+  function startBoard() {
+    for (let tries = 0; tries < 500; tries++) {
+      const g = grid(), h = [...Array(NS).keys()].map((i) => (i < TUNE.start - NS ? 2 : 1)).sort(() => Math.random() - 0.5);
+      for (let s = 0; s < NS; s++) for (let k = 0; k < h[s]; k++) g[k][s] = newCell(Math.floor(Math.random() * 4));
+      if (!findRuns(g).length) return g;
+    }
+    return grid();
+  }
+  function titleBoard() {
+    const g = grid();
+    for (let s = 0; s < NS; s++) { const h = 1 + Math.floor(Math.random() * 3.4); for (let k = 0; k < Math.min(4, h); k++) g[k][s] = newCell(Math.floor(Math.random() * 6)); }
+    g[0][2] = newCell(PEARL);
+    return g;
+  }
+
+  function startGame() {
+    Object.assign(S, { mode: 'play', play: 0, score: 0, shown: 0, pulse: 0, spills: 0, sunk: 0, longest: 0, deeps: 0, over: 0, newBest: false, idle: 0 });
+    S.best = kit.best();
+    G = startBoard(); for (let k = 0; k < NR; k++) for (let s = 0; s < NS; s++) if (G[k][s]) G[k][s].vr = k;
+    ringOff = [0, 0, 0, 0]; wob = [0, 0, 0, 0]; lastNotch = [0, 0, 0, 0];
+    grab = pend = anim = null; res = { active: false };
+    arrT = 0; holdWait = 0; picks = []; twoMouths = false; nextMouth = 0; mouthCurl = [0, 0]; mouthOpen = 0;
+    nextTop = pickShell(); nextBot = pickShell();
+    eddyT = 0; eddy = null; miles = {};
+    flyers = []; specks = []; chips = []; ripples = []; pops = []; spillers = []; crestFx = []; crestGain = [0, 0, 0];
+    caption = { text: 'Drag or tap a ring', t: 2.6, dur: 2.6, col: C.ivory };
+    buzz();
+  }
+
+  function gameOver() {
+    S.mode = 'over'; S.over = 0;
+    S.newBest = S.score > 0 && kit.saveBest(S.score); S.best = kit.best();
+    grab = pend = anim = null; finger = null;
+    buzz('heavy'); snd(110, 0.7, 'sine', 0.1); snd(165, 0.5, 'triangle', 0.05);
+  }
+
+  // ---------- geometry helpers ----------
+  const radOf = (vr) => HUB + (vr + 0.5) * RW;
+  const posOf = (vr, a) => { const th = a * NOTCH, rr = radOf(vr); return [CX + Math.sin(th) * rr, CY - Math.cos(th) * rr, th]; };
+  const angleAt = (x, y) => Math.atan2(x - CX, -(y - CY));
+  const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; };
+  function ringAt(x, y) {
+    const d = Math.hypot(x - CX, y - CY);
+    if (d < HUB * 0.92 || d > R * 1.06) return -1;
+    return Math.max(0, Math.min(NR - 1, Math.floor((d - HUB) / RW)));
+  }
+  const easeIO = (u) => (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
+  const backOut = (u) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2); };
+
+  // ---------- turning ----------
+  function startTurn(k, from, to, dur, ease, opts) {
+    anim = { k, from, to, t: 0, dur, ease, finger: opts && opts.finger };
+    if (anim.finger) finger = { k, a0: opts.a0 };
+  }
+  function commitTurn(k, n) {
+    ringOff[k] = 0; lastNotch[k] = 0; wob[k] = 1; finger = null;
+    const nn = ((Math.round(n) % NS) + NS) % NS;
+    snd(420, 0.04, 'triangle', 0.05);
+    if (nn) { rotate(G, k, nn); startResolve(); }
+  }
+  function releaseGrab(forced) {
+    if (!grab) return;
+    const dur = performance.now() - grab.t0;
+    const isTap = !forced && grab.moved < 8 && dur < 250;
+    const k = grab.k, off = grab.off; grab = null;
+    if (isTap) startTurn(k, off, 1, 0.16, backOut);
+    else startTurn(k, off, Math.round(off), 0.16, backOut);
+  }
+  function tryBegin() {
+    if (!pend || res.active || anim || grab || S.mode !== 'play') return;
+    const p = pend; pend = null;
+    if (p.down) { grab = { k: p.k, last: angleAt(P.x, P.y), off: 0, t0: p.t0, moved: p.moved, x0: p.x0, y0: p.y0 }; }
+    else if (p.tap) startTurn(p.k, 0, 1, 0.16, backOut);
+  }
+
+  // ---------- cascade ----------
+  function startResolve() { settle(G); res = { active: true, stage: 'sink', chain: 0, wait: 0.03, runs: null }; }
+  function allSettled() { for (let k = 0; k < NR; k++) for (let s = 0; s < NS; s++) { const c = G[k][s]; if (c && c.vr !== k) return false; } return true; }
+  function stepResolve(dt) {
+    if (!res.active || anim) return;
+    if (res.stage === 'sink') {
+      if (!allSettled()) return;
+      res.wait -= dt; if (res.wait > 0) return;
+      const runs = findRuns(G);
+      if (!runs.length) { res.active = false; return; }
+      res.chain++; res.runs = runs; res.stage = 'mark'; res.wait = 0.1;
+      for (const r of runs) for (const [k, s] of r.pos) if (G[k][s]) G[k][s].pulse = 0;
+    } else if (res.stage === 'mark') {
+      res.wait -= dt; if (res.wait > 0) return;
+      const c = res.chain, o = applyClear(G, res.runs, c, newCell);
+      clearFx(o, c);
+      settle(G); res.stage = 'sink'; res.wait = 0.05;
+    }
+  }
+  const PENTA = [392, 440, 523, 587, 659, 784, 880, 1047, 1175, 1319];
+  function clearFx(o, c) {
+    S.score += o.pts; S.pulse = 1; S.longest = Math.max(S.longest, c);
+    let shells = 0;
+    for (const r of o.removed) {
+      if (!r.cell) continue; shells++;
+      const [x, y, th] = posOf(r.k, r.s);
+      flyers.push({ t: 0, type: r.cell.t, r0: radOf(r.k), a0: th, x, y });
+    }
+    S.sunk += shells;
+    for (const r of o.crumbled) {
+      const [x, y, th] = posOf(r.k, r.s);
+      for (let i = 0; i < 5; i++) { const a = th + (Math.random() - 0.5) * 1.6, sp = 90 + Math.random() * 120; chips.push({ x, y, vx: Math.sin(a) * sp, vy: -Math.cos(a) * sp, rot: Math.random() * 6, vrot: (Math.random() - 0.5) * 12, life: 0.9, s: SH * (0.25 + Math.random() * 0.25) }); }
+    }
+    for (const p of o.pearls) { p.cell.vr = p.k; const [x, y] = posOf(p.k, p.s); ripples.push({ x, y, t: 0 }); }
+    if (o.deep) {
+      S.deeps += o.deep;
+      for (let i = 0; i < o.deep && S.spills > 0; i++) { S.spills--; crestGain[S.spills] = 1; }
+    }
+    const label = c > 1 ? 'Chain x' + c + ' +' + o.pts : '+' + o.pts;
+    pops.push({ text: label, t: 0, big: c > 1 || o.deep || o.full });
+    if (o.full) setCaption('Full circle', C.goldHi, 1.6);
+    else if (o.deep) setCaption('Deep dive', C.goldHi, 1.6);
+    else if (c > 1) setCaption('Chain x' + c, C.gold, 1.2);
+    const f = PENTA[Math.min(PENTA.length - 1, c - 1)];
+    snd(f, 0.25, 'triangle', 0.08);
+    if (o.deep || o.full) { snd(f * 1.5, 0.3, 'triangle', 0.06); snd(110, 0.6, 'sine', 0.12); buzz('medium'); }
+    else buzz();
+  }
+  function setCaption(text, col, dur) { caption = { text, t: dur, dur, col }; }
+
+  // ---------- arrivals ----------
+  const mouthSpoke = (m) => (m ? 4 : 0);
+  const nextIs = () => (twoMouths ? nextMouth : 0);
+  function startVr(m) {
+    const p = m ? prevBot : prevTop, d = Math.hypot(p.x - CX, p.y - CY);
+    return Math.max(4, (d - HUB) / RW - 0.5);
+  }
+  function doArrival() {
+    const m = nextIs(), s = mouthSpoke(m), t = m ? nextBot : nextTop;
+    if (m) nextBot = pickShell(); else nextTop = pickShell();
+    if (twoMouths) nextMouth = 1 - nextMouth;
+    mouthCurl[m] = 1;
+    const h = count(G, s);
+    if (h >= NR) return spill(m, t);
+    const c = newCell(t); c.vr = startVr(m); c.mouth = m; G[h][s] = c;
+    snd(760, 0.05, 'sine', 0.035);
+    startResolve();
+  }
+  function spill(m, t) {
+    const x = CX, y = m ? CY + R * 1.03 : CY - R * 1.03, side = Math.random() < 0.5 ? -1 : 1;
+    spillers.push({ t: 0, type: t, x, y, vx: side * (140 + Math.random() * 90), vy: m ? 60 : -420, rot: 0, vrot: side * 9 });
+    const i = S.spills; S.spills++;
+    crestFx.push({ i, t: 0, side });
+    shake = 0.15; buzz('heavy');
+    snd(140, 0.12, 'sine', 0.12); snd(70, 0.07, 'sawtooth', 0.05); snd(95, 0.06, 'square', 0.03);
+    if (S.spills >= 3) gameOver();
+  }
+
+  // ---------- autopilot ----------
+  function plan() {
+    const m = nextIs(), ms = mouthSpoke(m), nt = m ? nextBot : nextTop;
+    let best = null;
+    const order = [0, 1, -1, 2, -2, 3, -3, 4];
+    for (const n of order) for (let k = 0; k < NR; k++) {
+      if (n === 0 && k > 0) continue;
+      const g = clone(G); rotate(g, k, n);
+      const r = simCascade(g);
+      let sc = r.pts + 40 * r.cl - 120 * (count(g, ms) >= NR ? 1 : 0) - 8 * maxH(g);
+      if (twoMouths && count(g, mouthSpoke(1 - m)) >= NR) sc -= 60;
+      const h = count(g, ms);
+      if (h < NR && nt !== STONE) {
+        const nb = [[h - 1, ms], [h, (ms + 1) % NS], [h, (ms + NS - 1) % NS]];
+        if (nb.some(([kk, ss]) => kk >= 0 && g[kk][ss] && (g[kk][ss].t === nt || g[kk][ss].t === PEARL))) sc += 15;
+        // look one arrival ahead: what the incoming shell would set off
+        const g2 = clone(g); g2[h][ms] = { t: nt }; const r2 = simCascade(g2);
+        sc += 0.5 * r2.pts + 10 * r2.cl;
+      }
+      if (!best || sc > best.sc + 1e-6) best = { k, n, sc };
+    }
+    return best;
+  }
+  function demoStep(dt) {
+    if (!demo || S.mode !== 'play') return;
+    demoT += dt;
+    if (demoT < TUNE.demoEvery || res.active || anim || grab) return;
+    demoT = 0;
+    const b = plan();
+    if (b && b.n) {
+      let a0 = 2.35; // finger starts at the lower right of the ring so it never hides the mouth
+      startTurn(b.k, 0, b.n, 0.25 + 0.05 * (Math.abs(b.n) - 1), easeIO, { finger: true, a0 });
+    }
+  }
+
+  // ---------- input ----------
+  function down(e) {
+    e.preventDefault();
+    P.x = e.clientX; P.y = e.clientY; P.down = true;
+    if (S.mode === 'title') { startGame(); return; }
+    if (S.mode === 'over') { if (S.over > 0.6) startGame(); return; }
+    if (S.mode === 'paused') { S.mode = 'play'; return; }
+    if (demo) return;
+    S.idle = 0;
+    const k = ringAt(P.x, P.y); if (k < 0) return;
+    pend = { k, x0: P.x, y0: P.y, t0: performance.now(), down: true, moved: 0, tap: false };
+    tryBegin();
+  }
+  function move(e) {
+    P.x = e.clientX; P.y = e.clientY;
+    if (pend && pend.down) pend.moved = Math.max(pend.moved, Math.hypot(P.x - pend.x0, P.y - pend.y0));
+    if (grab) {
+      grab.moved = Math.max(grab.moved, Math.hypot(P.x - grab.x0, P.y - grab.y0));
+      const a = angleAt(P.x, P.y), d = Math.hypot(P.x - CX, P.y - CY);
+      if (d > HUB * 0.5) { grab.off += wrapA(a - grab.last) / NOTCH; grab.last = a; }
+      ringOff[grab.k] = grab.off;
+    }
+  }
+  function up(e) {
+    P.down = false;
+    if (grab) releaseGrab(false);
+    if (pend && pend.down) { pend.down = false; pend.tap = pend.moved < 8 && performance.now() - pend.t0 < 250; if (!pend.tap) pend = null; }
+  }
+  cv.addEventListener('pointerdown', down);
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+  kit.onPause(() => { if (S.mode === 'play') { S.mode = 'paused'; if (grab) releaseGrab(true); pend = null; } });
+
+  // ---------- update ----------
+  const MILES = [[45, 'Urchins wash in'], [90, 'Barnacle stones'], [120, 'A second mouth opens'], [150, 'Eddies stir the pool'], [180, 'Sand dollars']];
+  function updateCells(dt) {
+    let landed = 0;
+    for (let k = 0; k < NR; k++) for (let s = 0; s < NS; s++) {
+      const c = G[k][s]; if (!c) continue;
+      if (c.vr === null) c.vr = k;
+      if (c.vr > k) {
+        const sp = c.vr > 3.6 ? 32 : 1 / 0.07;
+        c.vr = Math.max(k, c.vr - sp * dt);
+        if (c.vr === k) { c.sq = 1; landed++; if (k === 0) hubFlare = Math.max(hubFlare, 0.12); }
+      } else if (c.vr < k) c.vr = k;
+      if (c.sq > 0) c.sq = Math.max(0, c.sq - dt / 0.2);
+      if (c.pulse >= 0) c.pulse += dt;
+    }
+    if (landed && sinkSnd <= 0) { snd(250, 0.08, 'sine', 0.06); snd(185, 0.06, 'sine', 0.04); sinkSnd = 0.07; }
+  }
+  function updateFx(dt) {
+    for (const f of flyers) {
+      f.t += dt;
+      if (f.t > 0.08) { const [x, y] = flyerPos(f); if (Math.random() < 0.9) specks.push({ x: x + (Math.random() - 0.5) * 4, y: y + (Math.random() - 0.5) * 4, life: 0.6 }); }
+      if (f.t >= 0.53 && !f.done) { f.done = true; hubFlare = 0.2; }
+    }
+    flyers = flyers.filter((f) => f.t < 0.53);
+    for (const s of specks) s.life -= dt;
+    specks = specks.filter((s) => s.life > 0);
+    if (specks.length > 400) specks.splice(0, specks.length - 400);
+    for (const c of chips) { c.x += c.vx * dt; c.y += c.vy * dt; c.vy += 300 * dt; c.rot += c.vrot * dt; c.life -= dt; }
+    chips = chips.filter((c) => c.life > 0);
+    for (const r of ripples) r.t += dt;
+    ripples = ripples.filter((r) => r.t < 0.6);
+    for (const p of pops) p.t += dt;
+    pops = pops.filter((p) => p.t < 1.2);
+    for (const s of spillers) {
+      s.t += dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 1100 * dt; s.rot += s.vrot * dt;
+    }
+    spillers = spillers.filter((s) => s.y < H + 60 && s.x > -60 && s.x < W + 60 && s.t < 4);
+    for (const c of crestFx) c.t += dt;
+    crestFx = crestFx.filter((c) => c.t < 1);
+    for (let i = 0; i < 3; i++) crestGain[i] = Math.max(0, crestGain[i] - dt / 0.5);
+    hubFlare = Math.max(0, hubFlare - dt);
+    shake = Math.max(0, shake - dt);
+    for (let k = 0; k < NR; k++) wob[k] = Math.max(0, wob[k] - dt / 0.25);
+    mouthCurl[0] = Math.max(0, mouthCurl[0] - dt / 0.2); mouthCurl[1] = Math.max(0, mouthCurl[1] - dt / 0.2);
+    if (caption.t > 0) caption.t -= dt;
+    S.pulse = Math.max(0, S.pulse - dt * 3);
+    S.shown += (S.score - S.shown) * Math.min(1, dt * 9); if (Math.abs(S.score - S.shown) < 0.6) S.shown = S.score;
+    sinkSnd -= dt;
+  }
+  function flyerPos(f) {
+    const u = Math.max(0, Math.min(1, (f.t - 0.08) / 0.45)), e = u * u * (3 - 2 * u) * 0.6 + u * 0.4;
+    const rr = f.r0 * (1 - e), a = f.a0 + e * Math.PI * 1.5;
+    return [CX + Math.sin(a) * rr, CY - Math.cos(a) * rr, a, e];
+  }
+
+  function update(dt) {
+    S.t += dt;
+    if (S.mode !== 'over') whirl += dt;
+    updateFx(dt);
+    if (S.mode === 'title') {
+      const sp = [0.16, -0.11, 0.07, -0.045];
+      for (let k = 0; k < NR; k++) ringOff[k] = S.t * sp[k];
+      updateCells(dt);
+      return;
+    }
+    if (S.mode === 'over') { S.over += dt; return; }
+    if (S.mode !== 'play') return;
+    S.play += dt; S.idle += dt;
+    for (const [t, msg] of MILES) if (S.play >= t && !miles[t]) { miles[t] = 1; setCaption(msg, C.ivory, 2.2); if (t === 120) { twoMouths = true; nextMouth = 1; nextBot = pickShell(); } }
+    if (twoMouths) mouthOpen = Math.min(1, mouthOpen + dt * 1.5);
+    updateCells(dt);
+    // ring turning animation
+    if (anim) {
+      anim.t += dt; const u = Math.min(1, anim.t / anim.dur);
+      ringOff[anim.k] = anim.from + (anim.to - anim.from) * anim.ease(u);
+      if (u >= 1) { const a = anim; anim = null; commitTurn(a.k, a.to); }
+    }
+    for (let k = 0; k < NR; k++) { const n = Math.round(ringOff[k]); if (n !== lastNotch[k]) { lastNotch[k] = n; snd(520, 0.03, 'triangle', 0.05); if (!mute && grab) kit.buzz(); } }
+    stepResolve(dt);
+    tryBegin();
+    if (S.mode !== 'play') return;
+    // the tide clock
+    const A = arrivalEvery(S.play);
+    arrT = Math.min(A, arrT + dt);
+    if (arrT >= A) {
+      if (grab) { holdWait += dt; if (holdWait > 1.5) releaseGrab(true); }
+      else if (!res.active && !anim && !pend) { arrT = 0; holdWait = 0; doArrival(); }
+    }
+    if (S.mode !== 'play') return;
+    // eddies
+    if (S.play >= 150) {
+      if (!eddy) { eddyT += dt; if (eddyT >= 20 || !miles.eddy) { miles.eddy = 1; eddyT = 0; let k; do { k = Math.floor(Math.random() * NR); } while (grab && grab.k === k); eddy = { k, dir: Math.random() < 0.5 ? -1 : 1, t: 0 }; } }
+      else {
+        eddy.t += dt;
+        if (eddy.t >= 1.5 && !res.active && !anim && !grab && !pend) { startTurn(eddy.k, 0, eddy.dir, 0.3, easeIO); eddy = null; snd(300, 0.2, 'sine', 0.05); }
+      }
+    }
+    demoStep(dt);
+  }
+
+  // ---------- drawing: shells ----------
+  function bodyPath(t, r) {
+    ctx.beginPath();
+    if (t === SCALLOP) {
+      const cy0 = 0.55 * r, rad = 1.3 * r, sp = 0.86, a0 = -Math.PI / 2 - sp, a1 = -Math.PI / 2 + sp;
+      ctx.moveTo(-0.3 * r, 0.6 * r);
+      ctx.lineTo(Math.cos(a0) * rad, cy0 + Math.sin(a0) * rad);
+      for (let i = 0; i < 5; i++) {
+        const aa = a0 + (a1 - a0) * (i / 5), ab = a0 + (a1 - a0) * ((i + 1) / 5), am = (aa + ab) / 2;
+        ctx.quadraticCurveTo(Math.cos(am) * rad * 1.13, cy0 + Math.sin(am) * rad * 1.13, Math.cos(ab) * rad, cy0 + Math.sin(ab) * rad);
+      }
+      ctx.lineTo(0.3 * r, 0.6 * r); ctx.lineTo(0.46 * r, 0.62 * r); ctx.lineTo(0.38 * r, 0.88 * r); ctx.lineTo(-0.38 * r, 0.88 * r); ctx.lineTo(-0.46 * r, 0.62 * r);
+      ctx.closePath();
+    } else if (t === SNAIL) {
+      ctx.arc(0, 0, 0.9 * r, 0, TAU);
+    } else if (t === STAR) {
+      const inner = 0.4 * r, ctl = 1.5 * r;
+      for (let i = 0; i < 5; i++) {
+        const at = -Math.PI / 2 + i * TAU / 5, al = at - Math.PI / 5, ar = at + Math.PI / 5;
+        if (i === 0) ctx.moveTo(Math.cos(al) * inner, Math.sin(al) * inner);
+        ctx.quadraticCurveTo(Math.cos(at) * ctl, Math.sin(at) * ctl, Math.cos(ar) * inner, Math.sin(ar) * inner);
+      }
+      ctx.closePath();
+    } else if (t === MUSSEL) {
+      ctx.moveTo(0, -0.98 * r);
+      ctx.bezierCurveTo(0.34 * r, -0.86 * r, 0.62 * r, 0.42 * r, 0.06 * r, 0.96 * r);
+      ctx.bezierCurveTo(-0.5 * r, 0.62 * r, -0.4 * r, -0.8 * r, 0, -0.98 * r);
+      ctx.closePath();
+    } else if (t === URCHIN) {
+      ctx.arc(0, 0, 0.68 * r, 0, TAU);
+    } else if (t === SAND) {
+      ctx.arc(0, 0, 0.9 * r, 0, TAU);
+    } else if (t === PEARL) {
+      ctx.arc(0, 0, 0.78 * r, 0, TAU);
+    } else { // stone
+      for (let i = 0; i < 11; i++) { const a = i / 11 * TAU, rr = r * (0.8 + 0.12 * Math.sin(i * 2.7) + 0.06 * Math.cos(i * 5.1)); if (i) ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); else ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+      ctx.closePath();
+    }
+  }
+  const BASE = ['#e2603f', '#efe6dc', '#e8b23e', '#3f63a8', '#8e4b96', '#5fae7f', '#fff7ee', '#4b4744'];
+  function drawShell(t, x, y, r, rot, o) {
+    o = o || {};
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(rot + (t === MUSSEL ? Math.PI / 6 : 0));
+    if (o.sx || o.sy) ctx.scale(o.sx || 1, o.sy || 1);
+    if (o.a !== undefined) ctx.globalAlpha = o.a;
+    if (t === URCHIN) { // spines under the body
+      ctx.strokeStyle = '#c79ad0'; ctx.lineWidth = Math.max(1, r * 0.09); ctx.lineCap = 'round';
+      ctx.beginPath(); for (let i = 0; i < 12; i++) { const a = i * TAU / 12; ctx.moveTo(Math.cos(a) * 0.6 * r, Math.sin(a) * 0.6 * r); ctx.lineTo(Math.cos(a) * 1.0 * r, Math.sin(a) * 1.0 * r); } ctx.stroke();
+    }
+    bodyPath(t, r);
+    if (t === SNAIL) {
+      const g = ctx.createLinearGradient(-r, -r, r, r); g.addColorStop(0, '#f4c9d6'); g.addColorStop(0.5, '#efe6dc'); g.addColorStop(1, '#c8e6dc'); ctx.fillStyle = g;
+    } else if (t === PEARL) {
+      const g = ctx.createRadialGradient(-0.28 * r, -0.3 * r, 0.05 * r, 0, 0, 0.8 * r); g.addColorStop(0, '#ffffff'); g.addColorStop(0.55, '#fff7ee'); g.addColorStop(1, '#f4d9cf'); ctx.fillStyle = g;
+    } else ctx.fillStyle = BASE[t];
+    ctx.fill();
+    // details
+    const lw = Math.max(1, r * 0.08);
+    ctx.lineCap = 'round';
+    if (t === SCALLOP) {
+      ctx.strokeStyle = '#f0d48a'; ctx.lineWidth = lw; ctx.beginPath();
+      for (let i = 0; i < 5; i++) { const a = -Math.PI / 2 - 0.86 + 1.72 * (i + 0.5) / 5; ctx.moveTo(Math.cos(a) * 0.22 * r, 0.55 * r + Math.sin(a) * 0.22 * r); ctx.lineTo(Math.cos(a) * 1.18 * r, 0.55 * r + Math.sin(a) * 1.18 * r); }
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-0.36 * r, 0.66 * r); ctx.lineTo(0.36 * r, 0.66 * r); ctx.stroke();
+    } else if (t === SNAIL) {
+      ctx.strokeStyle = 'rgba(140,106,42,0.85)'; ctx.lineWidth = lw; ctx.beginPath();
+      for (let i = 0; i <= 36; i++) { const u = i / 36, a = u * 3 * Math.PI, rr = (0.08 + 0.62 * u) * r; const px = 0.08 * r + Math.cos(a) * rr, py = -0.04 * r + Math.sin(a) * rr; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }
+      ctx.stroke();
+    } else if (t === STAR) {
+      ctx.fillStyle = '#8c6a2a';
+      for (let i = 0; i < 5; i++) { const a = -Math.PI / 2 + i * TAU / 5; for (const d of [0.26, 0.47, 0.66]) { ctx.beginPath(); ctx.arc(Math.cos(a) * d * r, Math.sin(a) * d * r, r * (d > 0.6 ? 0.06 : 0.075), 0, TAU); ctx.fill(); } }
+    } else if (t === MUSSEL) {
+      ctx.strokeStyle = 'rgba(169,195,234,0.9)'; ctx.lineWidth = Math.max(1.2, r * 0.13);
+      ctx.beginPath(); ctx.moveTo(-0.02 * r, -0.66 * r); ctx.quadraticCurveTo(0.3 * r, -0.05 * r, 0.1 * r, 0.6 * r); ctx.stroke();
+      ctx.strokeStyle = 'rgba(169,195,234,0.35)'; ctx.lineWidth = Math.max(1, r * 0.06);
+      ctx.beginPath(); ctx.moveTo(-0.16 * r, -0.4 * r); ctx.quadraticCurveTo(0.02 * r, 0.1 * r, -0.08 * r, 0.6 * r); ctx.stroke();
+    } else if (t === URCHIN) {
+      ctx.fillStyle = '#c79ad0';
+      for (let i = 0; i < 6; i++) { const a = i * TAU / 6 + 0.3; ctx.beginPath(); ctx.arc(Math.cos(a) * 0.38 * r, Math.sin(a) * 0.38 * r, r * 0.065, 0, TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.09, 0, TAU); ctx.fill();
+    } else if (t === SAND) {
+      ctx.fillStyle = '#d7efd9';
+      for (let i = 0; i < 5; i++) { const a = -Math.PI / 2 + i * TAU / 5; ctx.beginPath(); ctx.ellipse(Math.cos(a) * 0.36 * r, Math.sin(a) * 0.36 * r, 0.1 * r, 0.27 * r, a + Math.PI / 2, 0, TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.07, 0, TAU); ctx.fill();
+    } else if (t === STONE) {
+      for (const [bx, by] of [[-0.3, -0.22], [0.3, -0.12], [-0.02, 0.36]]) {
+        ctx.fillStyle = '#77706a'; ctx.beginPath(); ctx.arc(bx * r, by * r, 0.22 * r, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#2b2725'; ctx.beginPath(); ctx.arc(bx * r, by * r, 0.08 * r, 0, TAU); ctx.fill();
+      }
+    }
+    // sliding sheen: its band follows the cell's angle
+    const sh = 0.5 + 0.34 * Math.sin(rot * 1.3 + (o.sheen || 0));
+    const sg = ctx.createLinearGradient(-r, -r, r, r);
+    sg.addColorStop(0, 'rgba(255,255,255,0)'); sg.addColorStop(Math.max(0.01, sh - 0.2), 'rgba(255,255,255,0)');
+    sg.addColorStop(sh, t === STONE ? 'rgba(255,255,255,0.1)' : 'rgba(255,248,235,0.32)');
+    sg.addColorStop(Math.min(0.99, sh + 0.2), 'rgba(255,255,255,0)'); sg.addColorStop(1, 'rgba(255,255,255,0)');
+    bodyPath(t, r); ctx.fillStyle = sg; ctx.fill();
+    // gold edge, never black
+    ctx.strokeStyle = t === STONE ? C.goldLo : (o.hot ? C.goldHi : C.gold); ctx.lineWidth = o.hot ? 1.8 : 1; ctx.lineJoin = 'round';
+    ctx.stroke();
+    if (t === PEARL) { ctx.strokeStyle = C.gold; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(0, 0, 0.86 * r, 0, TAU); ctx.stroke(); }
+    ctx.restore();
+    // tiny glint, top left in screen space
+    if (t !== STONE) {
+      ctx.save(); if (o.a !== undefined) ctx.globalAlpha = o.a;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(x - 0.3 * r * (o.sx || 1), y - 0.32 * r * (o.sy || 1), Math.max(0.9, r * 0.09), 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // ---------- drawing: board ----------
+  function crestPath(x, y, s, curl) {
+    const c = curl || 0;
+    ctx.beginPath();
+    ctx.moveTo(x - s, y + s * 0.5);
+    ctx.quadraticCurveTo(x - s * 0.65, y - s * 0.9, x + s * 0.25, y - s * (0.85 + 0.15 * c));
+    ctx.quadraticCurveTo(x + s * (0.95 + 0.3 * c), y - s * (0.65 + 0.1 * c), x + s * (0.72 + 0.25 * c), y - s * (0.05 - 0.2 * c));
+    ctx.quadraticCurveTo(x + s * 0.42, y - s * 0.5, x + s * 0.05, y - s * 0.22);
+    ctx.quadraticCurveTo(x + s * 0.45, y + s * 0.1, x + s, y + s * 0.5);
+    ctx.closePath();
+  }
+  function drawMouth(m, alpha) {
+    const th = m ? Math.PI : 0, rr = R * 1.03;
+    const x = CX + Math.sin(th) * rr, y = CY - Math.cos(th) * rr;
+    const warn = S.mode === 'play' && nextIs() === m && arrT > arrivalEvery(S.play) - 1.0 && count(G, mouthSpoke(m)) >= NR;
+    const pulse = warn ? 0.55 + 0.45 * Math.sin(S.t * TAU * 4) : 0;
+    ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(th);
+    const a = 0.12 * R, col = warn ? C.warn : C.gold;
+    ctx.fillStyle = '#0e0b0a'; ctx.beginPath(); ctx.arc(0, 0, a, Math.PI, TAU); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, a, Math.PI, TAU); ctx.stroke();
+    ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, a * 0.72, Math.PI, TAU); ctx.stroke();
+    // the wave crest on top of the arch; curls over when a shell drops
+    const c = mouthCurl[m];
+    ctx.fillStyle = col; crestPath(-a * 0.15, -a * 1.12, a * 0.62, c); ctx.fill();
+    ctx.strokeStyle = warn ? '#ffb3a0' : C.goldHi; ctx.lineWidth = 1; ctx.stroke();
+    if (warn) { ctx.globalAlpha = alpha * pulse * 0.5; ctx.fillStyle = C.warn; ctx.beginPath(); ctx.arc(0, -a * 0.5, a * 1.6, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+  function drawPreview(m, alpha) {
+    const p = m ? prevBot : prevTop, t = m ? nextBot : nextTop;
+    ctx.save(); ctx.globalAlpha = alpha;
+    const rr = SH * 1.55;
+    ctx.fillStyle = 'rgba(14,11,10,0.8)'; ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(207,162,74,0.45)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.stroke();
+    if (S.mode === 'play' && nextIs() === m) {
+      const f = arrT / arrivalEvery(S.play);
+      const warn = f > 0 && arrT > arrivalEvery(S.play) - 1 && count(G, mouthSpoke(m)) >= NR;
+      ctx.strokeStyle = warn ? C.warn : C.gold; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(p.x, p.y, rr + 3, -Math.PI / 2, -Math.PI / 2 + f * TAU); ctx.stroke();
+    }
+    if (S.mode !== 'title') drawShell(t, p.x, p.y, SH, m ? Math.PI : 0, { sx: 1.05, sy: 1.05 });
+    ctx.globalAlpha = alpha * 0.8;
+    if (p.x > CX + 1) spaced('NEXT', p.x + rr + 10, p.y + 4, 10, 0.18, C.ivory, '', 'left'); else spaced('NEXT', p.x - rr - 10, p.y + 4, 10, 0.18, C.ivory, '', 'right');
+    ctx.restore();
+  }
+  function drawBoard() {
+    const t = whirl;
+    // flowing-water gold pattern: five spirals turning clockwise, one turn per 40 s
+    ctx.save(); ctx.strokeStyle = 'rgba(207,162,74,0.13)'; ctx.lineWidth = 1.3; ctx.lineCap = 'round';
+    const base = t * TAU / 40;
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      for (let j = 0; j <= 28; j++) { const u = j / 28, rr = R * 0.98 * (1 - u) + HUB * u, a = base + i * TAU / 5 + u * 2.3; const x = CX + Math.sin(a) * rr, y = CY - Math.cos(a) * rr; if (j) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+      ctx.stroke();
+    }
+    ctx.restore();
+    // mouth lanes
+    ctx.save(); ctx.setLineDash([2, 4]); ctx.lineCap = 'round';
+    for (const m of twoMouths ? [0, 1] : [0]) {
+      const th = m ? Math.PI : 0, full = count(G, mouthSpoke(m)) >= NR;
+      ctx.strokeStyle = full ? 'rgba(201,80,58,0.55)' : 'rgba(240,212,138,0.45)'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(CX + Math.sin(th) * HUB, CY - Math.cos(th) * HUB); ctx.lineTo(CX + Math.sin(th) * R, CY - Math.cos(th) * R); ctx.stroke();
+    }
+    ctx.restore();
+    // ring borders and inlay notches
+    const held = grab ? grab.k : (anim ? anim.k : -1);
+    const shimmer = S.mode === 'play' ? Math.max(S.play < 5 ? 1 - S.play / 5 : 0, S.idle > 6 ? Math.min(1, (S.idle - 6) / 2) : 0) : 0;
+    for (let k = 0; k <= NR; k++) {
+      const hot = held >= 0 && (k === held || k === held + 1);
+      const w = (k > 0 ? wob[k - 1] : 0) + (k < NR ? wob[k] : 0);
+      const rr = HUB + k * RW + (w ? Math.sin(S.t * 70) * w * 1.2 : 0);
+      ctx.strokeStyle = hot ? C.goldHi : C.gold; ctx.lineWidth = hot ? 2.2 : 1.5;
+      ctx.beginPath(); ctx.arc(CX, CY, rr, 0, TAU); ctx.stroke();
+      if (shimmer > 0 && k > 0) {
+        const a0 = S.t * 1.6 + k * 1.3;
+        ctx.strokeStyle = 'rgba(240,212,138,' + (0.55 * shimmer) + ')'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(CX, CY, rr, a0, a0 + 0.7); ctx.stroke(); ctx.lineCap = 'butt';
+      }
+    }
+    ctx.fillStyle = C.gold;
+    for (let k = 0; k < NR; k++) {
+      const rr = HUB + (k + 0.5) * RW;
+      for (let s = 0; s < NS; s++) {
+        const a = (s + 0.5 + ringOff[k]) * NOTCH, x = CX + Math.sin(a) * rr, y = CY - Math.cos(a) * rr;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 4); ctx.globalAlpha = 0.7; ctx.fillRect(-1.3, -1.3, 2.6, 2.6); ctx.restore();
+      }
+    }
+    // eddy arrows
+    if (eddy) {
+      const rr = HUB + (eddy.k + 0.5) * RW, al = Math.min(1, eddy.t / 0.25) * (0.6 + 0.4 * Math.sin(S.t * 14));
+      ctx.save(); ctx.globalAlpha = al; ctx.strokeStyle = C.goldHi; ctx.fillStyle = C.goldHi; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      for (const base0 of [Math.PI * 0.25, Math.PI * 1.25]) {
+        const a0 = base0 - Math.PI / 2, a1 = a0 + eddy.dir * 0.8, cw = eddy.dir < 0;
+        ctx.beginPath(); ctx.arc(CX, CY, rr, Math.min(a0, a1), Math.max(a0, a1)); ctx.stroke();
+        const hx = CX + Math.cos(a1) * rr, hy = CY + Math.sin(a1) * rr, ta = a1 + (cw ? -Math.PI / 2 : Math.PI / 2);
+        ctx.beginPath(); ctx.moveTo(hx + Math.cos(ta) * 7, hy + Math.sin(ta) * 7); ctx.lineTo(hx + Math.cos(ta + 2.5) * 6, hy + Math.sin(ta + 2.5) * 6); ctx.lineTo(hx + Math.cos(ta - 2.5) * 6, hy + Math.sin(ta - 2.5) * 6); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+    // the hub: the eye of the whirl
+    ctx.fillStyle = '#0c0908'; ctx.beginPath(); ctx.arc(CX, CY, HUB * 0.96, 0, TAU); ctx.fill();
+    if (hubFlare > 0) { const g = ctx.createRadialGradient(CX, CY, 0, CX, CY, HUB * 1.6); g.addColorStop(0, 'rgba(240,212,138,' + (hubFlare * 2.5) + ')'); g.addColorStop(1, 'rgba(240,212,138,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(CX, CY, HUB * 1.6, 0, TAU); ctx.fill(); }
+    ctx.strokeStyle = hubFlare > 0 ? C.goldHi : C.gold; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+    ctx.beginPath();
+    const hr = -t * 0.7;
+    for (let i = 0; i <= 60; i++) { const u = i / 60, a = hr + u * 5 * Math.PI, rr = HUB * 0.82 * u; const x = CX + Math.sin(a) * rr, y = CY - Math.cos(a) * rr; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+    ctx.stroke();
+    // mouths
+    drawMouth(0, 1);
+    if (twoMouths) drawMouth(1, mouthOpen);
+    // shells
+    const lift = S.mode === 'over' ? Math.sin(Math.min(1, S.over / 0.6) * Math.PI) * 0.07 : 0;
+    const still = S.mode === 'over';
+    for (let k = 0; k < NR; k++) for (let s = 0; s < NS; s++) {
+      const c = G[k][s]; if (!c) continue;
+      const vr = c.vr === null ? k : c.vr;
+      let a = s + (vr === k ? ringOff[k] : 0);
+      const [x, y, th] = posOf(vr, a);
+      let sc = 1 + (still ? 0 : 0.02 * Math.sin(S.t * TAU / 3 + c.ph)) + lift;
+      let sx = 1, sy = 1, hot = false;
+      if (c.sq > 0) { const q = Math.sin(c.sq * Math.PI) * 0.16; sy = 1 - q; sx = 1 + q * 0.8; }
+      if (c.pulse >= 0) { sc *= 1 + 0.18 * Math.sin(Math.min(1, c.pulse / 0.1) * Math.PI); hot = true; }
+      drawShell(c.t, x, y, SH, th, { sx: sx * sc, sy: sy * sc, hot, sheen: c.ph * 0.2 });
+    }
+    // fx
+    for (const r of ripples) { const u = r.t / 0.6; ctx.strokeStyle = 'rgba(240,212,138,' + (1 - u) + ')'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(r.x, r.y, SH + (0.25 * R - SH) * u, 0, TAU); ctx.stroke(); }
+    for (const f of flyers) {
+      const pulse = f.t < 0.08 ? 1 + 0.18 * Math.sin(f.t / 0.08 * Math.PI) : 1;
+      const [x, y, a, e] = f.t < 0.08 ? [f.x, f.y, f.a0, 0] : flyerPos(f);
+      const sc = pulse * (1 - 0.8 * e);
+      drawShell(f.type, x, y, SH, a, { sx: sc, sy: sc, a: 1 - 0.3 * e, hot: true });
+    }
+    ctx.fillStyle = C.goldHi;
+    for (const s of specks) { ctx.globalAlpha = Math.max(0, s.life / 0.6) * 0.9; ctx.fillRect(s.x - 0.9, s.y - 0.9, 1.8, 1.8); }
+    ctx.globalAlpha = 1;
+    for (const c of chips) {
+      ctx.save(); ctx.globalAlpha = Math.min(1, c.life / 0.4); ctx.translate(c.x, c.y); ctx.rotate(c.rot); ctx.fillStyle = '#5f5a55';
+      ctx.beginPath(); ctx.moveTo(-c.s, -c.s * 0.6); ctx.lineTo(c.s * 0.9, -c.s * 0.3); ctx.lineTo(c.s * 0.4, c.s * 0.8); ctx.lineTo(-c.s * 0.7, c.s * 0.5); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    // the autopilot's finger
+    if (finger && demo) {
+      const rr = HUB + (finger.k + 0.5) * RW, a = finger.a0 + ringOff[finger.k] * NOTCH;
+      const x = CX + Math.sin(a) * rr, y = CY - Math.cos(a) * rr;
+      ctx.fillStyle = 'rgba(233,223,207,0.22)'; ctx.beginPath(); ctx.arc(x, y, 19, 0, TAU); ctx.fill();
+      ctx.strokeStyle = 'rgba(240,212,138,0.7)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 19, 0, TAU); ctx.stroke();
+    }
+  }
+
+  // ---------- drawing: text and HUD ----------
+  function spaced(str, x, y, size, track, col, style, align) {
+    ctx.font = (style ? style + ' ' : '') + size + 'px ' + SERIF;
+    ctx.fillStyle = col; ctx.textAlign = 'left';
+    const sp = size * track, ws = []; let w = 0;
+    for (const ch of str) { const m = ctx.measureText(ch).width; ws.push(m); w += m + sp; }
+    w -= sp;
+    let cx0 = align === 'left' ? x : align === 'right' ? x - w : x - w / 2, i = 0;
+    for (const ch of str) { ctx.fillText(ch, cx0, y); cx0 += ws[i++] + sp; }
+    return w;
+  }
+  function text(str, x, y, size, col, style, align) {
+    ctx.font = (style ? style + ' ' : '') + size + 'px ' + SERIF; ctx.fillStyle = col; ctx.textAlign = align || 'center'; ctx.fillText(str, x, y);
+  }
+  function drawHud() {
+    const top = safeTop;
+    if (S.mode === 'play' || S.mode === 'paused' || S.mode === 'over') {
+      const sc = 1 + 0.12 * S.pulse;
+      ctx.save(); ctx.translate(W / 2, top + 54); ctx.scale(sc, sc);
+      text(String(Math.round(S.shown)), 0, 0, 44, C.gold, '', 'center');
+      ctx.restore();
+      spaced('BEST ' + Math.max(S.best, S.score), W / 2, top + 78, 11, 0.18, C.ivory, '', 'center');
+      // spills: three gold wave crests, top right
+      for (let i = 0; i < 3; i++) {
+        const x = W - 22 - (2 - i) * 28, y = top + 30, lost = i < S.spills;
+        const falling = crestFx.find((c) => c.i === i);
+        if (lost) { ctx.strokeStyle = 'rgba(207,162,74,0.3)'; ctx.lineWidth = 1; crestPath(x, y, 10); ctx.stroke(); }
+        else { const g = crestGain[i], s = 10 * (1 + 0.5 * Math.sin(g * Math.PI)); ctx.fillStyle = C.gold; crestPath(x, y, s); ctx.fill(); ctx.strokeStyle = C.goldHi; ctx.lineWidth = 1; ctx.stroke(); }
+        if (falling) {
+          const u = falling.t;
+          ctx.save(); ctx.globalAlpha = 1 - u; ctx.translate(x + falling.side * u * 18, y + u * u * 60); ctx.rotate(falling.side * u * 2);
+          ctx.fillStyle = C.gold; ctx.beginPath(); ctx.moveTo(-10, 5); ctx.quadraticCurveTo(-6, -9, 2, -8); ctx.lineTo(-1, 2); ctx.closePath(); ctx.fill();
+          ctx.translate(8, 4); ctx.rotate(-falling.side * u * 3); ctx.beginPath(); ctx.moveTo(-4, -8); ctx.quadraticCurveTo(6, -7, 7, 0); ctx.lineTo(2, 1); ctx.closePath(); ctx.fill();
+          ctx.restore();
+        }
+      }
+      drawPreview(0, 1);
+      if (twoMouths) drawPreview(1, mouthOpen);
+    }
+    // score pops rising from the hub
+    for (const p of pops) {
+      const u = p.t / 1.2, e = 1 - Math.pow(1 - u, 3);
+      ctx.save(); ctx.globalAlpha = u < 0.75 ? 1 : 1 - (u - 0.75) / 0.25;
+      const y = CY - HUB * 0.3 - e * R * 0.42;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(12,9,8,0.75)'; ctx.font = 'italic ' + (p.big ? 22 : 19) + 'px ' + SERIF; ctx.textAlign = 'center';
+      ctx.strokeText(p.text, CX, y); ctx.fillStyle = C.goldHi; ctx.fillText(p.text, CX, y);
+      ctx.restore();
+    }
+    // chain caption
+    if (caption.t > 0 && S.mode !== 'title') {
+      const u = 1 - caption.t / caption.dur, a = Math.min(1, u * 6, caption.t * 3);
+      ctx.save(); ctx.globalAlpha = Math.max(0, a);
+      text(caption.text, W / 2, H * 0.875 + (1 - Math.min(1, u * 5)) * 8, 24, caption.col, 'italic', 'center');
+      ctx.restore();
+    }
+    // spilled shells fly off over everything
+    for (const s of spillers) drawShell(s.type, s.x, s.y, SH, s.rot, {});
+  }
+  function card(cx, cy, cw, ch) {
+    ctx.fillStyle = 'rgba(8,6,5,0.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = C.well; ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.fill();
+    const g = ctx.createLinearGradient(cx, cy, cx + cw, cy + ch);
+    g.addColorStop(0, 'rgba(44,34,29,0)'); g.addColorStop(0.4, 'rgba(44,34,29,0.8)'); g.addColorStop(0.6, 'rgba(44,34,29,0)');
+    ctx.fillStyle = g; ctx.fillRect(cx, cy, cw, ch);
+    ctx.strokeStyle = C.gold; ctx.lineWidth = 2; ctx.strokeRect(cx + 6, cy + 6, cw - 12, ch - 12);
+    ctx.lineWidth = 0.8; ctx.strokeStyle = 'rgba(207,162,74,0.5)'; ctx.strokeRect(cx + 10, cy + 10, cw - 20, ch - 20);
+    ctx.fillStyle = C.vermHi;
+    for (const [x, y] of [[cx + 6, cy + 6], [cx + cw - 6, cy + 6], [cx + 6, cy + ch - 6], [cx + cw - 6, cy + ch - 6]]) { ctx.beginPath(); ctx.arc(x, y, 3.5, 0, TAU); ctx.fill(); }
+  }
+  function drawTitle() {
+    const y0 = Math.max(safeTop + 74, H * 0.12);
+    let size = 34; ctx.font = size + 'px ' + SERIF;
+    const est = ctx.measureText('WHIRLWHELK').width + size * 0.34 * 9;
+    if (est > W - 40) size = Math.floor(size * (W - 40) / est);
+    spaced('WHIRLWHELK', W / 2, y0, size, 0.34, C.gold, '', 'center');
+    ctx.strokeStyle = 'rgba(207,162,74,0.6)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(W / 2 - 70, y0 + 14); ctx.lineTo(W / 2 + 70, y0 + 14); ctx.stroke();
+    ctx.fillStyle = C.vermHi; ctx.beginPath(); ctx.arc(W / 2, y0 + 14, 2.5, 0, TAU); ctx.fill();
+    spaced('SPIN THE RINGS · SHELLS SINK INWARD', W / 2, y0 + 36, 10, 0.18, C.ivory, '', 'center');
+    const ty = Math.min(H * 0.85, CY + R * 1.06 + 64);
+    ctx.save(); ctx.globalAlpha = 0.65 + 0.35 * Math.sin(S.t * 3);
+    text('Tap to begin', W / 2, ty, 24, C.ivory, 'italic', 'center'); ctx.restore();
+    text('Turn a ring. Three alike in a line clear.', W / 2, ty + 28, 14, 'rgba(233,223,207,0.7)', 'italic', 'center');
+    if (S.best > 0) spaced('BEST ' + S.best, W / 2, ty + 52, 11, 0.18, C.gold, '', 'center');
+  }
+  const mss = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+  function drawOver() {
+    const k = Math.min(1, Math.max(0, (S.over - 0.35) / 0.35)); if (k <= 0) return;
+    const e = 1 - Math.pow(1 - k, 3);
+    const cw = Math.min(320, W - 40), ch = 372, cx = (W - cw) / 2, cy = H * 0.5 - ch / 2 + (1 - e) * 24;
+    ctx.save(); ctx.globalAlpha = e;
+    card(cx, cy, cw, ch);
+    text('The tide is in', W / 2, cy + 58, 30, C.goldHi, 'italic', 'center');
+    spaced('SCORE', W / 2, cy + 96, 11, 0.18, C.ivory, '', 'center');
+    if (S.newBest) {
+      for (let i = 0; i < 3; i++) {
+        const u = ((S.over * 0.7 + i / 3) % 1);
+        ctx.strokeStyle = 'rgba(240,212,138,' + (0.7 * (1 - u)) + ')'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(W / 2, cy + 128, 44 + u * 70, 22 + u * 30, 0, 0, TAU); ctx.stroke();
+      }
+    }
+    text(String(S.score), W / 2, cy + 144, 48, C.gold, '', 'center');
+    spaced(S.newBest ? 'NEW BEST' : 'BEST ' + S.best, W / 2, cy + 174, 11, 0.18, S.newBest ? C.goldHi : C.ivory, '', 'center');
+    ctx.strokeStyle = 'rgba(207,162,74,0.4)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx + 34, cy + 194); ctx.lineTo(cx + cw - 34, cy + 194); ctx.stroke();
+    const rows = [['SHELLS SUNK', String(S.sunk)], ['LONGEST CHAIN', 'x' + Math.max(1, S.longest)], ['DEEP DIVES', String(S.deeps)], ['TIME', mss(S.play)]];
+    rows.forEach(([l, v], i) => {
+      const col = i % 2, row = Math.floor(i / 2), x = cx + cw * (col ? 0.73 : 0.27), y = cy + 226 + row * 52;
+      spaced(l, x, y, 9.5, 0.18, 'rgba(233,223,207,0.75)', '', 'center');
+      text(v, x, y + 24, 22, C.goldHi, '', 'center');
+    });
+    if (S.over > 0.6) { ctx.globalAlpha = e * (0.6 + 0.4 * Math.sin(S.t * 3.5)); text('Tap to play again', W / 2, cy + ch - 26, 19, C.ivory, 'italic', 'center'); }
+    ctx.restore();
+  }
+  function drawPaused() {
+    const cw = Math.min(280, W - 48), ch = 130, cx = (W - cw) / 2, cy = H * 0.5 - ch / 2;
+    card(cx, cy, cw, ch);
+    text('Paused', W / 2, cy + 58, 30, C.goldHi, 'italic', 'center');
+    text('Tap to carry on', W / 2, cy + 92, 17, C.ivory, 'italic', 'center');
+  }
+
+  function draw() {
+    const sx = shake > 0 ? (Math.random() - 0.5) * 6 : 0, sy = shake > 0 ? (Math.random() - 0.5) * 6 : 0;
+    ctx.fillStyle = C.black; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.translate(sx, sy);
+    if (bg) ctx.drawImage(bg, 0, 0, W, H);
+    drawBoard();
+    ctx.restore();
+    drawHud();
+    if (S.mode === 'title') drawTitle();
+    if (S.mode === 'over') drawOver();
+    if (S.mode === 'paused') drawPaused();
+  }
+
+  // ---------- loop ----------
+  G = titleBoard();
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, Math.max(0, (now - last) / 1000)); last = now;
+    if (S.mode !== 'paused') update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  function fastForward(sec, bot) {
+    mute = true; const rb = { t: 0.2, hold: 0, k: -1 };
+    for (let i = 0; i < sec * 60 && S.mode === 'play'; i++) {
+      if (bot === 'random') { // mimics the playtest's random taps (for tuning)
+        rb.t -= 1 / 60;
+        if (rb.t <= 0) {
+          if (rb.k === -2) { rb.k = -1; rb.t = Math.random() * 0.3; }
+          else {
+            const x = (60 + Math.random() * 270) * W / 390, y = (200 + Math.random() * 500) * H / 844, hold = 0.03 + Math.random() * 0.4, k = ringAt(x, y);
+            if (k >= 0 && hold < 0.25) { pend = { k, down: false, tap: true, moved: 0, t0: 0 }; tryBegin(); }
+            rb.k = -2; rb.t = hold;
+          }
+        }
+      }
+      update(1 / 60);
+    }
+    mute = false;
+    flyers = []; specks = []; chips = []; ripples = []; pops = []; spillers = []; crestFx = [];
+  }
+  // test hook used by scripts/playtest.mjs and scripts/shoot.mjs
+  window.__game = {
+    state: () => ({ mode: S.mode, score: S.score }),
+    demo: (on) => {
+      demo = !!on; demoT = 0;
+      if (!demo) { finger = null; return; }
+      if (S.mode === 'title') startGame();
+      grab = pend = null;
+      // a fresh run skips ahead (muted) so screenshots show a stocked pool and a real score
+      if (S.mode === 'play' && S.play < 2) fastForward(55);
+    },
+    sim: (sec, bot) => { fastForward(sec, bot); return S.mode; },
+    start: () => startGame(),
+    tune: (o) => Object.assign(TUNE, o || {}),
+    dbg: () => ({ t: Math.round(S.play), score: S.score, spills: S.spills, sunk: S.sunk, chain: S.longest, deeps: S.deeps, heights: [...Array(NS).keys()].map((s) => count(G, s)).join('') })
+  };
+})();
+</script>
+</body>
+</html>

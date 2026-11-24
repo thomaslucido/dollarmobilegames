@@ -108,5 +108,15 @@
     "slug": "wickwalk",
     "status": "built",
     "why": "Freehand route-drawing timing verb, unlike our merge, sort, arrow and block puzzles; chalk-on-slate look is new for the studio. QA passed after one fix round."
+  },
+  {
+    "date": "2026-11-23",
+    "trend": "match-3 / tile-matching puzzle",
+    "evidence": "Directional only (no chart snapshots in data/trends/): Sensor Tower Oct 2026 worldwide top grossing led by tile/match puzzles; AppMagic H1 2026 puzzle ~44% of casual spend, match-3 ~51% of puzzle. See data/scout/2026-11-23.md.",
+    "concept": "Round lacquer tide pool with 4 rings and 8 spokes; gravity points inward. Turn whole rings so shells settle onto new spokes; three alike along a spoke or around a ring sink into the eye. Three spills end the run.",
+    "name": "Whirlwhelk",
+    "slug": "whirlwhelk",
+    "status": "built",
+    "why": "Tile-matching not in last 6 games; idle builder skipped because sow-far is within the last 6. No grid, no swaps, no levels: radial gravity is the twist."
   }
 ]
